@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "Receipt": {
+      "title": "Receipt",
+      "description": "A scanned receipt with extracted data.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the receipt." },
+        "merchantName": { "type": "string", "description": "Name of the merchant or activity." },
+        "date": { "type": "string", "format": "date", "description": "Date of the transaction (YYYY-MM-DD)." },
+        "totalAmount": { "type": "number", "description": "Total amount of the transaction." },
+        "currency": { "type": "string", "description": "Currency code (e.g., USD, EUR)." },
+        "category": { "type": "string", "description": "Category of the expense." },
+        "status": { "type": "string", "enum": ["pending", "synced"], "description": "Sync status of the receipt." },
+        "createdAt": { "type": "number", "description": "Timestamp when the receipt was created." },
+        "imageUrl": { "type": "string", "description": "URL of the receipt image stored in Firebase Storage." },
+        "ownerId": { "type": "string", "description": "User ID of the receipt owner." }
+      },
+      "required": ["merchantName", "date", "totalAmount", "currency", "category", "createdAt", "ownerId"]
+    }
+  },
+  "firestore": {
+    "users/{userId}/receipts/{receiptId}": {
+      "schema": "Receipt",
+      "description": "Collection of receipts for a specific user."
+    }
+  }
+}

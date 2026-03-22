@@ -1,0 +1,167 @@
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+import multer from 'multer';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const DATA_DIR = path.join(__dirname, 'data');
+const IMAGES_DIR = path.join(DATA_DIR, 'images');
+const CSV_FILE = path.join(DATA_DIR, 'receipts.csv');
+
+// Ensure directories exist
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+
+// Initialize CSV with headers if it doesn't exist
+const CSV_HEADERS = ['id', 'merchantName', 'date', 'totalAmount', 'currency', 'category', 'status', 'createdAt', 'imageFilename'];
+if (!fs.existsSync(CSV_FILE)) {
+  fs.writeFileSync(CSV_FILE, CSV_HEADERS.join(',') + '\n', 'utf-8');
+}
+
+// Helper to escape CSV fields
+const escapeCSV = (str: string | number) => {
+  const s = String(str);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+};
+
+// Multer setup for image uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, IMAGES_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    const ext = path.extname(file.originalname) || '.jpg';
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  }
+});
+const upload = multer({ storage });
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // Serve uploaded images statically
+  app.use('/api/images', express.static(IMAGES_DIR));
+
+  // GET all receipts
+  app.get('/api/receipts', (req, res) => {
+    try {
+      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
+      const lines = fileContent.trim().split('\n');
+      const headers = lines[0].split(',');
+      
+      const receipts = lines.slice(1).map(line => {
+        // Simple CSV parser (doesn't handle commas inside quotes perfectly, but good enough for simple data)
+        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
+        const receipt: any = {};
+        headers.forEach((header, index) => {
+          receipt[header] = values[index];
+        });
+        
+        // Type conversions
+        receipt.totalAmount = parseFloat(receipt.totalAmount);
+        receipt.createdAt = parseInt(receipt.createdAt, 10);
+        if (receipt.imageFilename) {
+          receipt.imageUrl = `/api/images/${receipt.imageFilename}`;
+        }
+        return receipt;
+      });
+      
+      // Sort by createdAt descending
+      receipts.sort((a, b) => b.createdAt - a.createdAt);
+      
+      res.json(receipts);
+    } catch (error) {
+      console.error('Error reading receipts:', error);
+      res.status(500).json({ error: 'Failed to read receipts' });
+    }
+  });
+
+  // POST new receipt
+  app.post('/api/receipts', upload.single('image'), (req, res) => {
+    try {
+      const { id, merchantName, date, totalAmount, currency, category, status, createdAt } = req.body;
+      const imageFilename = req.file ? req.file.filename : '';
+
+      const row = [
+        id,
+        merchantName,
+        date,
+        totalAmount,
+        currency,
+        category,
+        status || 'synced',
+        createdAt,
+        imageFilename
+      ].map(escapeCSV).join(',');
+
+      fs.appendFileSync(CSV_FILE, row + '\n', 'utf-8');
+
+      res.status(201).json({ success: true, id, imageFilename });
+    } catch (error) {
+      console.error('Error saving receipt:', error);
+      res.status(500).json({ error: 'Failed to save receipt' });
+    }
+  });
+
+  // DELETE a receipt
+  app.delete('/api/receipts/:id', (req, res) => {
+    try {
+      const idToDelete = req.params.id;
+      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
+      const lines = fileContent.trim().split('\n');
+      
+      let imageToDelete = '';
+      const newLines = lines.filter((line, index) => {
+        if (index === 0) return true; // Keep headers
+        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        if (values[0] === idToDelete) {
+          imageToDelete = values[8]?.replace(/^"|"$/g, ''); // imageFilename is at index 8
+          return false;
+        }
+        return true;
+      });
+
+      fs.writeFileSync(CSV_FILE, newLines.join('\n') + '\n', 'utf-8');
+
+      // Delete the image file if it exists
+      if (imageToDelete) {
+        const imagePath = path.join(IMAGES_DIR, imageToDelete);
+        if (fs.existsSync(imagePath)) {
+          fs.unlinkSync(imagePath);
+        }
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error deleting receipt:', error);
+      res.status(500).json({ error: 'Failed to delete receipt' });
+    }
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();

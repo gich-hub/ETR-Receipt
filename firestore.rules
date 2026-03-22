@@ -1,0 +1,108 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/receipts
+    // Document ID: {receiptId} (UUID)
+    // Fields:
+    //   - merchantName: string (required, 1-100 chars)
+    //   - date: string (required, YYYY-MM-DD format)
+    //   - totalAmount: number (required, positive)
+    //   - currency: string (required, 3 chars, e.g., USD)
+    //   - category: string (required, enum: Meals, Transport, Lodging, Supplies, Entertainment, Other)
+    //   - status: string (required, enum: pending, synced)
+    //   - createdAt: number (required, timestamp)
+    //   - imageUrl: string (optional, valid URL)
+    //   - ownerId: string (required, matches userId)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+    
+    function isValidOptionalString(field, minLen, maxLen) {
+       return !('field' in request.resource.data) || 
+              (request.resource.data[field] is string &&
+               request.resource.data[field].size() >= minLen &&
+               request.resource.data[field].size() <= maxLen);
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    function isValidAmount(amount) {
+      return amount is number && amount >= 0;
+    }
+
+    function isValidCurrency(currency) {
+      return currency is string && currency.size() == 3;
+    }
+
+    function isValidCategory(category) {
+      return category in ['Meals', 'Transport', 'Lodging', 'Supplies', 'Entertainment', 'Other'];
+    }
+
+    function isValidStatus(status) {
+      return status in ['pending', 'synced'];
+    }
+    
+    function isValidUrl(url) {
+       return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Domain Validator
+    function isValidReceipt(data) {
+      return hasRequiredFields(['merchantName', 'date', 'totalAmount', 'currency', 'category', 'status', 'createdAt', 'ownerId']) &&
+             hasOnlyAllowedFields(['id', 'merchantName', 'date', 'totalAmount', 'currency', 'category', 'status', 'createdAt', 'imageUrl', 'ownerId']) &&
+             isValidString('merchantName', 1, 100) &&
+             isValidDateString(data.date) &&
+             isValidAmount(data.totalAmount) &&
+             isValidCurrency(data.currency) &&
+             isValidCategory(data.category) &&
+             isValidStatus(data.status) &&
+             data.createdAt is number &&
+             data.ownerId == request.auth.uid &&
+             (!('imageUrl' in data) || isValidUrl(data.imageUrl));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId}/receipts/{receiptId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidReceipt(request.resource.data);
+      allow update: if isOwner(userId) && isValidReceipt(request.resource.data);
+      allow delete: if isOwner(userId);
+    }
+  }
+}
