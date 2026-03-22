@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = path.join(process.cwd(), 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
 const CSV_FILE = path.join(DATA_DIR, 'receipts.csv');
 
@@ -17,13 +17,19 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 // Initialize CSV with headers if it doesn't exist
-const CSV_HEADERS = ['id', 'merchantName', 'date', 'totalAmount', 'currency', 'category', 'status', 'createdAt', 'imageFilename'];
+const CSV_HEADERS = [
+  'id', 'merchantName', 'merchantKraPin', 'date', 
+  'totalTaxableAmount', 'totalTax', 'totalAmount', 
+  'currency', 'category', 'buyerName', 'buyerPin', 
+  'scuSignature', 'status', 'createdAt', 'imageFilename'
+];
 if (!fs.existsSync(CSV_FILE)) {
   fs.writeFileSync(CSV_FILE, CSV_HEADERS.join(',') + '\n', 'utf-8');
 }
 
 // Helper to escape CSV fields
-const escapeCSV = (str: string | number) => {
+const escapeCSV = (str: string | number | undefined | null) => {
+  if (str === undefined || str === null) return '';
   const s = String(str);
   if (s.includes(',') || s.includes('"') || s.includes('\n')) {
     return `"${s.replace(/"/g, '""')}"`;
@@ -51,36 +57,62 @@ async function startServer() {
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
+  // Request logger
+  app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+  });
+
+  // Health check
+  app.get('/api/health', (req, res) => res.json({ ok: true }));
+
   // Serve uploaded images statically
   app.use('/api/images', express.static(IMAGES_DIR));
 
   // GET all receipts
   app.get('/api/receipts', (req, res) => {
+    console.log('Fetching receipts from:', CSV_FILE);
     try {
+      if (!fs.existsSync(CSV_FILE)) {
+        console.log('CSV file does not exist, returning empty array');
+        return res.json([]);
+      }
       const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
       const lines = fileContent.trim().split('\n');
+      console.log(`Found ${lines.length} lines in CSV`);
+      if (lines.length <= 1) {
+        return res.json([]);
+      }
       const headers = lines[0].split(',');
       
-      const receipts = lines.slice(1).map(line => {
-        // Simple CSV parser (doesn't handle commas inside quotes perfectly, but good enough for simple data)
-        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
-        const receipt: any = {};
-        headers.forEach((header, index) => {
-          receipt[header] = values[index];
-        });
-        
-        // Type conversions
-        receipt.totalAmount = parseFloat(receipt.totalAmount);
-        receipt.createdAt = parseInt(receipt.createdAt, 10);
-        if (receipt.imageFilename) {
-          receipt.imageUrl = `/api/images/${receipt.imageFilename}`;
+      const receipts = lines.slice(1).map((line, i) => {
+        try {
+          // Simple CSV parser
+          const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
+          const receipt: any = {};
+          headers.forEach((header, index) => {
+            receipt[header] = values[index];
+          });
+          
+          // Type conversions
+          if (receipt.totalTaxableAmount) receipt.totalTaxableAmount = parseFloat(receipt.totalTaxableAmount);
+          if (receipt.totalTax) receipt.totalTax = parseFloat(receipt.totalTax);
+          receipt.totalAmount = parseFloat(receipt.totalAmount) || 0;
+          receipt.createdAt = parseInt(receipt.createdAt, 10) || Date.now();
+          if (receipt.imageFilename) {
+            receipt.imageUrl = `/api/images/${receipt.imageFilename}`;
+          }
+          return receipt;
+        } catch (e) {
+          console.error(`Error parsing line ${i + 1}:`, line, e);
+          return null;
         }
-        return receipt;
-      });
+      }).filter(Boolean);
       
       // Sort by createdAt descending
-      receipts.sort((a, b) => b.createdAt - a.createdAt);
+      receipts.sort((a: any, b: any) => b.createdAt - a.createdAt);
       
+      console.log(`Returning ${receipts.length} receipts`);
       res.json(receipts);
     } catch (error) {
       console.error('Error reading receipts:', error);
@@ -91,16 +123,27 @@ async function startServer() {
   // POST new receipt
   app.post('/api/receipts', upload.single('image'), (req, res) => {
     try {
-      const { id, merchantName, date, totalAmount, currency, category, status, createdAt } = req.body;
+      const { 
+        id, merchantName, merchantKraPin, date, 
+        totalTaxableAmount, totalTax, totalAmount, 
+        currency, category, buyerName, buyerPin, 
+        scuSignature, status, createdAt, phone
+      } = req.body;
       const imageFilename = req.file ? req.file.filename : '';
 
       const row = [
         id,
         merchantName,
+        merchantKraPin,
         date,
+        totalTaxableAmount,
+        totalTax,
         totalAmount,
         currency,
         category,
+        buyerName,
+        buyerPin,
+        scuSignature,
         status || 'synced',
         createdAt,
         imageFilename
@@ -127,7 +170,8 @@ async function startServer() {
         if (index === 0) return true; // Keep headers
         const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
         if (values[0] === idToDelete) {
-          imageToDelete = values[8]?.replace(/^"|"$/g, ''); // imageFilename is at index 8
+          // imageFilename is the last column
+          imageToDelete = values[values.length - 1]?.replace(/^"|"$/g, ''); 
           return false;
         }
         return true;

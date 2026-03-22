@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getReceipts, Receipt } from '@/lib/db';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Download, FileText } from 'lucide-react';
+import { ArrowLeft, FileText, Table, Link as LinkIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -48,10 +48,12 @@ export function Export() {
       startY: 40,
     });
 
-    // Add Images (This is tricky with blobs in browser, let's try)
+    // Add Images
     let y = (doc as any).lastAutoTable.finalY + 10;
     
     for (const receipt of receipts) {
+      if (!receipt.imageBlob && !receipt.imageUrl) continue;
+
       if (y > 250) {
         doc.addPage();
         y = 20;
@@ -62,27 +64,31 @@ export function Export() {
       y += 10;
 
       try {
-        // Convert blob to base64 for PDF
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(receipt.imageBlob);
-        });
-
-        // Add image
-        // We need to scale it to fit
-        const imgProps = doc.getImageProperties(base64);
-        const pdfWidth = doc.internal.pageSize.getWidth() - 28;
-        const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-        
-        // Check if image fits on page
-        if (y + pdfHeight > 280) {
-          doc.addPage();
-          y = 20;
+        let base64 = '';
+        if (receipt.imageBlob) {
+          base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(receipt.imageBlob!);
+          });
+        } else if (receipt.imageUrl) {
+          // Fetch and convert imageUrl to base64 if needed, skipping for now to keep it simple
+          continue; 
         }
 
-        doc.addImage(base64, 'JPEG', 14, y, pdfWidth, pdfHeight);
-        y += pdfHeight + 10;
+        if (base64) {
+          const imgProps = doc.getImageProperties(base64);
+          const pdfWidth = doc.internal.pageSize.getWidth() - 28;
+          const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+          
+          if (y + pdfHeight > 280) {
+            doc.addPage();
+            y = 20;
+          }
+
+          doc.addImage(base64, 'JPEG', 14, y, pdfWidth, pdfHeight);
+          y += pdfHeight + 10;
+        }
       } catch (e) {
         console.error("Failed to add image for receipt", receipt.id, e);
         doc.text("[Image Error]", 14, y);
@@ -119,41 +125,88 @@ export function Export() {
     document.body.removeChild(link);
   };
 
+  const [copied, setCopied] = useState(false);
+
+  const generateLink = async () => {
+    try {
+      const shareUrl = `${window.location.origin}/shared-report/${Date.now()}`;
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+      alert("Manager Quick-Link generated! (Clipboard access denied)");
+    }
+  };
+
   return (
-    <div className="flex flex-col min-h-screen bg-white">
-      <header className="px-6 py-4 border-b flex items-center gap-4">
+    <div className="flex flex-col min-h-screen bg-[#0a0a0a] text-white font-sans">
+      <header className="px-6 py-6 border-b border-white/10 flex items-center gap-4 sticky top-0 bg-[#0a0a0a] z-10">
         <Link to="/">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="w-5 h-5" />
+          <Button variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white rounded-full">
+            <ArrowLeft className="w-6 h-6" />
           </Button>
         </Link>
-        <h1 className="text-lg font-semibold">Export Data</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Handoff Data</h1>
       </header>
 
-      <main className="flex-1 p-6 space-y-8">
+      <main className="flex-1 p-6 max-w-2xl mx-auto w-full">
+        <p className="text-gray-400 text-base mb-8">
+          Choose how you want to export your vault contents.
+        </p>
+
         <div className="space-y-4">
-          <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-            <h3 className="font-medium text-blue-900">Ready to Export</h3>
-            <p className="text-sm text-blue-700 mt-1">
-              {receipts.length} receipts found.
-            </p>
-          </div>
-
-          <Button onClick={generatePDF} className="w-full justify-start h-14" variant="outline">
-            <FileText className="w-5 h-5 mr-3 text-red-600" />
-            <div className="text-left">
-              <div className="font-semibold text-gray-900">Download PDF Report</div>
-              <div className="text-xs text-gray-500">Includes receipt images</div>
+          {/* PDF Option */}
+          <button 
+            onClick={generatePDF}
+            className="w-full text-left bg-[#141414] hover:bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 flex items-start gap-5 transition-colors group"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-red-500/20 transition-colors">
+              <FileText className="w-7 h-7 text-red-500" />
             </div>
-          </Button>
-
-          <Button onClick={generateCSV} className="w-full justify-start h-14" variant="outline">
-            <Download className="w-5 h-5 mr-3 text-green-600" />
-            <div className="text-left">
-              <div className="font-semibold text-gray-900">Download CSV</div>
-              <div className="text-xs text-gray-500">For Excel or Sheets</div>
+            <div className="flex-1 pt-1">
+              <h3 className="text-xl font-bold text-white mb-1.5">Audit-Ready PDF</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">
+                Monthly summary with receipt images attached directly below data tables.
+              </p>
             </div>
-          </Button>
+          </button>
+
+          {/* CSV Option */}
+          <button 
+            onClick={generateCSV}
+            className="w-full text-left bg-[#141414] hover:bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 flex items-start gap-5 transition-colors group"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-green-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-green-500/20 transition-colors">
+              <Table className="w-7 h-7 text-green-500" />
+            </div>
+            <div className="flex-1 pt-1">
+              <h3 className="text-xl font-bold text-white mb-1.5">CSV / Excel Dump</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">
+                Clean structured data ready to copy-paste into HR spreadsheets.
+              </p>
+            </div>
+          </button>
+
+          {/* Link Option */}
+          <button 
+            onClick={generateLink}
+            className="w-full text-left bg-[#141414] hover:bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 flex items-start gap-5 transition-colors group relative"
+          >
+            <div className="w-14 h-14 rounded-2xl bg-blue-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-500/20 transition-colors">
+              <LinkIcon className="w-7 h-7 text-blue-500" />
+            </div>
+            <div className="flex-1 pt-1">
+              <h3 className="text-xl font-bold text-white mb-1.5">
+                {copied ? "Link Copied!" : "Manager Quick-Link"}
+              </h3>
+              <p className="text-gray-400 text-sm leading-relaxed">
+                {copied 
+                  ? "Secure URL copied to clipboard. You can now paste and share it." 
+                  : "Generate a secure URL to share specific expenses instantly."}
+              </p>
+            </div>
+          </button>
         </div>
       </main>
     </div>

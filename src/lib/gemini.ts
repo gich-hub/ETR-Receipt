@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize the Gemini API client
 // Note: We use the environment variable for the API key.
@@ -6,10 +6,16 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export interface OCRResult {
   merchantName?: string;
+  merchantKraPin?: string;
   date?: string;
+  totalTaxableAmount?: number;
+  totalTax?: number;
   totalAmount?: number;
   currency?: string;
   category?: string;
+  buyerName?: string;
+  buyerPin?: string;
+  scuSignature?: string;
 }
 
 export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
@@ -27,17 +33,23 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       reader.readAsDataURL(imageBlob);
     });
 
-    const model = "gemini-2.5-flash-image"; // Optimized for speed and images
+    const model = "gemini-3.1-pro-preview"; 
     const prompt = `
       Analyze this receipt image. Extract the following information:
       - Merchant Name (or activity name if unclear)
+      - Merchant KRA PIN (usually starts with P or A followed by numbers and a letter)
       - Date (YYYY-MM-DD format)
+      - Total Taxable Amount (number only)
+      - Total Tax (number only)
       - Total Amount (number only)
-      - Currency (symbol or code, e.g., USD, EUR, £)
+      - Currency (symbol or code, e.g., USD, EUR, KES)
       - Category (e.g., Meals, Transport, Lodging, Supplies, Entertainment)
+      - Buyer Name (if present)
+      - Buyer PIN (if present)
+      - SCU Signature (usually a long alphanumeric string or hash at the bottom)
 
-      Return ONLY a JSON object with these keys: merchantName, date, totalAmount, currency, category.
-      Do not include markdown formatting or code blocks.
+      Return a JSON object with these keys: merchantName, merchantKraPin, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, scuSignature.
+      If a value is not found, omit the key or return null.
     `;
 
     const response = await ai.models.generateContent({
@@ -49,7 +61,24 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
         ]
       },
       config: {
-        responseMimeType: "application/json"
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            merchantName: { type: Type.STRING, description: "The name of the merchant" },
+            merchantKraPin: { type: Type.STRING, description: "The KRA PIN of the merchant" },
+            date: { type: Type.STRING, description: "The date of the receipt in YYYY-MM-DD format" },
+            totalTaxableAmount: { type: Type.NUMBER, description: "The total taxable amount" },
+            totalTax: { type: Type.NUMBER, description: "The total tax amount" },
+            totalAmount: { type: Type.NUMBER, description: "The total amount on the receipt" },
+            currency: { type: Type.STRING, description: "The currency code or symbol" },
+            category: { type: Type.STRING, description: "The expense category" },
+            buyerName: { type: Type.STRING, description: "The name of the buyer" },
+            buyerPin: { type: Type.STRING, description: "The PIN of the buyer" },
+            scuSignature: { type: Type.STRING, description: "The SCU Signature or receipt hash" }
+          },
+          required: ["merchantName", "date", "totalAmount", "currency", "category"]
+        }
       }
     });
 
@@ -60,10 +89,16 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       const data = JSON.parse(text);
       return {
         merchantName: data.merchantName,
+        merchantKraPin: data.merchantKraPin,
         date: data.date,
-        totalAmount: typeof data.totalAmount === 'string' ? parseFloat(data.totalAmount.replace(/[^0-9.]/g, '')) : data.totalAmount,
+        totalTaxableAmount: data.totalTaxableAmount,
+        totalTax: data.totalTax,
+        totalAmount: data.totalAmount,
         currency: data.currency,
-        category: data.category
+        category: data.category,
+        buyerName: data.buyerName,
+        buyerPin: data.buyerPin,
+        scuSignature: data.scuSignature
       };
     } catch (e) {
       console.error("Failed to parse JSON:", text);

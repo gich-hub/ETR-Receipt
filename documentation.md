@@ -5,12 +5,13 @@ ReceiptVault is a full-stack web application designed to streamline expense trac
 
 ## 💡 Value Proposition
 *   **AI-Powered Extraction**: Eliminates manual data entry by leveraging Google's Gemini AI to instantly parse receipt images for critical metadata.
+*   **Flexible Input & PWA**: Installable as a Progressive Web App (PWA) for a native-like experience, allowing users to capture receipts via device camera or upload existing images from their gallery.
 *   **Multi-Persona Management**: Seamlessly handles multiple business entities or clients, associating expenses with specific tax PINs (e.g., KRA PIN) and contact details.
 *   **Automated Workflows**: Simulates automated routing by "sending" processed receipts to configured phone numbers, streamlining the reimbursement or accounting pipeline.
 
 ## 👥 Stakeholder Relevance
 *   **Who this is built for**: Freelancers, small business owners, and accounting professionals managing multiple client profiles.
-*   **How they would use it day-to-day**: They select a specific business persona, snap a photo of a receipt, review the AI-extracted data, and save it.
+*   **How they would use it day-to-day**: They install the app on their mobile device or desktop (via PWA), select a specific business persona, snap a photo or upload an existing receipt from their gallery, review the AI-extracted data (skipping non-critical missing fields if necessary), and save it.
 *   **The outcome or value it drives for them**: Saves hours of manual bookkeeping, reduces human error in expense reporting, and ensures tax compliance by accurately tracking expenses against specific entity PINs.
 *   **Secondary stakeholders**: Tax authorities (benefiting from accurate, digitized records) and corporate finance teams (receiving automated receipt submissions).
 
@@ -23,7 +24,7 @@ A monolithic full-stack application serving a React SPA via Vite middleware on a
 
 | Component | Technology | Rationale |
 | :--- | :--- | :--- |
-| **Frontend** | React 19 + Vite | Fast development server, modern component-based UI. |
+| **Frontend** | React 19 + Vite + PWA | Fast development server, modern component-based UI, installable as a standalone app. |
 | **Styling** | Tailwind CSS | Utility-first styling for rapid, responsive UI development. |
 | **Backend** | Node.js + Express | Lightweight server to handle API requests and serve static assets. |
 | **AI / OCR** | `@google/genai` | Powerful multimodal LLM for accurate receipt data extraction. |
@@ -47,12 +48,14 @@ ReceiptVault started as a local-only prototype and has evolved into a full-stack
 
 **Current Status (Phase 1):**
 *   [x] Basic UI and navigation
-*   [x] Camera integration for receipt scanning
+*   [x] Camera and gallery integration for receipt scanning
 *   [x] Gemini AI integration for OCR data extraction
 *   [x] Full-stack Express backend for data persistence
 *   [x] CSV and image file storage
 *   [x] Multi-persona management with KRA PINs and phone numbers
 *   [x] Auto-send simulation workflow
+*   [x] Progressive Web App (PWA) configuration
+*   [x] Soft validation (warning modals) allowing users to skip missing fields
 
 **Upcoming Phases:**
 
@@ -67,6 +70,14 @@ ReceiptVault started as a local-only prototype and has evolved into a full-stack
 
 ## 📝 Changelog
 
+### [2026-03-22] - PWA, Gallery Uploads, and UX Improvements
+
+#### 🚀 Major Changes
+*   Configured the application as a Progressive Web App (PWA) using `vite-plugin-pwa`, enabling installation on mobile and desktop devices.
+*   Added gallery upload support alongside the camera capture for flexible receipt input.
+*   Introduced a soft validation workflow: users are now warned about missing fields via a custom modal but can choose to "Skip & Save" anyway.
+*   Replaced native browser `confirm()` dialogs with custom, mobile-friendly modals for deletion actions.
+
 ### [v1.0.0] - Initial Release
 
 #### 🚀 Major Changes
@@ -79,3 +90,9 @@ ReceiptVault started as a local-only prototype and has evolved into a full-stack
 #### 🐛 Fixes
 *   Fixed image preview to load from the backend URL instead of local blobs.
 *   Resolved routing issues by ensuring the persona state is passed through the scanning flow.
+
+---
+Keep this document factual and grounded in what we've actually built. 
+Avoid speculation. Flag anything uncertain with [UNCONFIRMED].
+When updating, always revise Stakeholder Relevance if the use case or 
+target user has shifted — this section should reflect current intent, not original assumptions.
