@@ -22,6 +22,18 @@ export function Scan() {
       // Analyze with Gemini
       const result = await analyzeReceipt(file);
       
+      // Check for buyer PIN contradiction
+      if (persona && result.buyerPin) {
+        const scannedPin = result.buyerPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        const personaPin = persona.kraPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        
+        if (scannedPin && personaPin && scannedPin !== personaPin) {
+          setError(`PIN Mismatch: The receipt is for buyer PIN ${result.buyerPin}, but the selected persona has PIN ${persona.kraPin}.`);
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+      
       // Pass data to Review page via state
       navigate('/review', { 
         state: { 

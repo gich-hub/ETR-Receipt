@@ -18,6 +18,7 @@ export interface Persona {
 export function Home() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -32,6 +33,10 @@ export function Home() {
     const file = e.target.files?.[0];
     if (file && selectedPersona) {
       navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+    }
+    // Clear the input so the same file can be selected again if needed
+    if (e.target) {
+      e.target.value = '';
     }
   };
 
@@ -315,12 +320,22 @@ export function Home() {
                 </div>
 
                 <div className="pt-4 md:pt-8 flex flex-col sm:flex-row gap-3">
-                  <Link to="/scan" state={{ persona: selectedPersona }} className="block w-full sm:w-auto">
-                    <Button size="lg" className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/30 transition-all hover:-translate-y-1 bg-blue-600 hover:bg-blue-700">
-                      <Camera className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />
-                      Scan Receipt
-                    </Button>
-                  </Link>
+                  <Button 
+                    size="lg" 
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/30 transition-all hover:-translate-y-1 bg-blue-600 hover:bg-blue-700"
+                  >
+                    <Camera className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />
+                    Scan Receipt
+                  </Button>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    capture="environment"
+                    className="hidden" 
+                    ref={cameraInputRef} 
+                    onChange={handleFileUpload} 
+                  />
                   <Button 
                     variant="outline"
                     size="lg" 

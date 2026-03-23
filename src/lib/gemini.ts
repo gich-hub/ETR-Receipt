@@ -33,7 +33,7 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       reader.readAsDataURL(imageBlob);
     });
 
-    const model = "gemini-3.1-pro-preview"; 
+    const model = "gemini-3-flash-preview"; 
     const prompt = `
       Analyze this receipt image. Extract the following information:
       - Merchant Name (or activity name if unclear)
@@ -44,8 +44,8 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       - Total Amount (number only)
       - Currency (symbol or code, e.g., USD, EUR, KES)
       - Category (e.g., Meals, Transport, Lodging, Supplies, Entertainment)
-      - Buyer Name (if present)
-      - Buyer PIN (if present)
+      - Buyer Name (by default the receipt should contain the buyer name, extract it if present)
+      - Buyer PIN (by default the receipt should contain the buyer PIN, extract it if present)
       - SCU Signature (usually a long alphanumeric string or hash at the bottom)
 
       Return a JSON object with these keys: merchantName, merchantKraPin, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, scuSignature.

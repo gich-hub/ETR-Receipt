@@ -185,7 +185,8 @@ export function Review() {
   if (isLoading) return <div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin" /></div>;
 
   if (showSuccess) {
-    const receiptUrl = `${window.location.origin}/receipt/${savedReceiptId}`;
+    const baseUrl = process.env.APP_URL || window.location.origin;
+    const receiptUrl = `${baseUrl}/receipt/${savedReceiptId}`;
     const phone = state?.persona?.phone ? state.persona.phone.replace(/\D/g, '') : '';
     const message = `🧾 *New Receipt Scanned*\n\n*Merchant:* ${formData.merchantName}\n*Date:* ${formData.date}\n*Amount:* ${formData.currency} ${formData.totalAmount}\n*Category:* ${formData.category}\n*KRA PIN:* ${formData.merchantKraPin || 'N/A'}\n\nView Receipt: ${receiptUrl}`;
     

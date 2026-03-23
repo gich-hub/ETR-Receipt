@@ -1,5 +1,5 @@
 {
-  "name": "ETR Receipt",
+  "name": "ETR Receipts",
   "description": "Mobile-first receipt scanning and expense tracking app with AI OCR and offline support.",
   "requestFramePermissions": [
     "camera"

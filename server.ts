@@ -120,7 +120,7 @@ async function startServer() {
     }
   });
 
-  // POST new receipt
+  // POST new receipt or update existing
   app.post('/api/receipts', upload.single('image'), (req, res) => {
     try {
       const { 
@@ -129,7 +129,31 @@ async function startServer() {
         currency, category, buyerName, buyerPin, 
         scuSignature, status, createdAt, phone
       } = req.body;
-      const imageFilename = req.file ? req.file.filename : '';
+      
+      let imageFilename = req.file ? req.file.filename : '';
+
+      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
+      const lines = fileContent.trim().split('\n');
+      let existingImageFilename = '';
+      let isUpdate = false;
+
+      // Check if receipt exists and get its imageFilename
+      for (let i = lines.length - 1; i >= 1; i--) {
+        const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        if (values[0] === id) {
+          isUpdate = true;
+          const foundImage = values[values.length - 1]?.replace(/^"|"$/g, '') || '';
+          if (foundImage) {
+            existingImageFilename = foundImage;
+            break;
+          }
+        }
+      }
+
+      // If no new image was uploaded, keep the existing one
+      if (!imageFilename && isUpdate) {
+        imageFilename = existingImageFilename;
+      }
 
       const row = [
         id,
@@ -149,7 +173,19 @@ async function startServer() {
         imageFilename
       ].map(escapeCSV).join(',');
 
-      fs.appendFileSync(CSV_FILE, row + '\n', 'utf-8');
+      if (isUpdate) {
+        // Remove existing rows with this ID and append the new one
+        const newLines = lines.filter((line, index) => {
+          if (index === 0) return true; // Keep headers
+          const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+          return values[0] !== id;
+        });
+        newLines.push(row);
+        fs.writeFileSync(CSV_FILE, newLines.join('\n') + '\n', 'utf-8');
+      } else {
+        // Append new row
+        fs.appendFileSync(CSV_FILE, row + '\n', 'utf-8');
+      }
 
       res.status(201).json({ success: true, id, imageFilename });
     } catch (error) {
@@ -191,6 +227,63 @@ async function startServer() {
     } catch (error) {
       console.error('Error deleting receipt:', error);
       res.status(500).json({ error: 'Failed to delete receipt' });
+    }
+  });
+
+  // Intercept /receipt/:id to inject Open Graph tags for bots
+  app.get('/receipt/:id', async (req, res, next) => {
+    try {
+      const userAgent = req.headers['user-agent'] || '';
+      const isBot = /bot|facebook|whatsapp|twitter|linkedin|telegram/i.test(userAgent);
+      
+      if (!isBot) {
+        return next(); // Let Vite handle it for normal browsers
+      }
+
+      const id = req.params.id;
+      if (!fs.existsSync(CSV_FILE)) return next();
+      
+      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
+      const lines = fileContent.trim().split('\n');
+      
+      let merchantName = 'Receipt';
+      let imageFilename = '';
+      let totalAmount = '';
+      let currency = '';
+      
+      for (let i = lines.length - 1; i >= 1; i--) {
+        const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+        if (values[0] === id) {
+          merchantName = values[1]?.replace(/^"|"$/g, '') || 'Receipt';
+          totalAmount = values[6]?.replace(/^"|"$/g, '') || '';
+          currency = values[7]?.replace(/^"|"$/g, '') || '';
+          imageFilename = values[values.length - 1]?.replace(/^"|"$/g, '') || '';
+          break;
+        }
+      }
+
+      if (!imageFilename) return next();
+
+      const baseUrl = process.env.APP_URL || `http://${req.headers.host}`;
+      const imageUrl = `${baseUrl}/api/images/${imageFilename}`;
+      const title = `Receipt: ${merchantName} - ${currency} ${totalAmount}`;
+      
+      const metaTags = `
+        <meta property="og:title" content="${title}" />
+        <meta property="og:description" content="Scanned with ETR Receipts" />
+        <meta property="og:image" content="${imageUrl}" />
+        <meta property="og:type" content="website" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content="${imageUrl}" />
+      `;
+      
+      let html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8');
+      html = html.replace('</head>', `${metaTags}</head>`);
+      
+      res.send(html);
+    } catch (e) {
+      console.error('Error serving receipt meta tags:', e);
+      next();
     }
   });
 
