@@ -34,6 +34,7 @@ export function Review() {
   const [existingReceipt, setExistingReceipt] = useState<Receipt | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedReceiptId, setSavedReceiptId] = useState<string | null>(null);
+  const [savedReceiptUrl, setSavedReceiptUrl] = useState<string | null>(null);
   const [monthlyTotal, setMonthlyTotal] = useState<number>(0);
   const [monthlyCount, setMonthlyCount] = useState<number>(0);
   const [showWarningModal, setShowWarningModal] = useState(false);
@@ -44,11 +45,13 @@ export function Review() {
     if (id) {
       loadExistingReceipt(id);
     } else if (state) {
-      loadNewReceipt(state);
+      const cleanup = loadNewReceipt(state);
+      return cleanup;
     } else {
       navigate('/');
     }
-  }, [id, state, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadNewReceipt = (state: { image: File; ocrData: OCRResult }) => {
     const url = URL.createObjectURL(state.image);
@@ -125,7 +128,7 @@ export function Review() {
       newErrors.totalAmount = "Must be greater than 0";
     }
 
-    if (!formData.scuSignature?.trim()) newErrors.scuSignature = "SCU Signature is required";
+    if (!formData.cuInvoiceNumber?.trim()) newErrors.cuInvoiceNumber = "Control Unit Invoice Number is required";
 
     if (formData.buyerPin?.trim() && !kraPinRegex.test(formData.buyerPin)) {
       newErrors.buyerPin = "Invalid KRA PIN format";
@@ -154,14 +157,15 @@ export function Review() {
         category: formData.category || 'Other',
         buyerName: formData.buyerName,
         buyerPin: formData.buyerPin,
-        scuSignature: formData.scuSignature,
+        cuInvoiceNumber: formData.cuInvoiceNumber,
         status: existingReceipt?.status || 'pending',
         createdAt: existingReceipt?.createdAt || Date.now(),
       };
 
-      await saveReceipt(receiptToSave, state?.persona?.phone);
+      const finalImageUrl = await saveReceipt(receiptToSave, state?.persona?.phone);
       
       setSavedReceiptId(receiptToSave.id);
+      if (finalImageUrl) setSavedReceiptUrl(finalImageUrl);
       
       // Calculate monthly total
       try {
@@ -218,7 +222,7 @@ export function Review() {
 
   if (showSuccess) {
     const baseUrl = process.env.APP_URL || window.location.origin;
-    const receiptUrl = `${baseUrl}/receipt/${savedReceiptId}`;
+    const receiptUrl = savedReceiptUrl || `${baseUrl}/receipt/${savedReceiptId}`;
     const phone = state?.persona?.phone ? state.persona.phone.replace(/\D/g, '') : '';
     const message = `🧾 *New Receipt Scanned*\n\n*Merchant:* ${formData.merchantName}\n*Date:* ${formData.date}\n*Amount:* ${formData.currency} ${formData.totalAmount}\n*Category:* ${formData.category}\n*KRA PIN:* ${formData.merchantKraPin || 'N/A'}\n\nView Receipt: ${receiptUrl}`;
     
@@ -487,16 +491,16 @@ export function Review() {
           </div>
 
           <div>
-            <Label field="scuSignature">SCU Signature</Label>
+            <Label field="cuInvoiceNumber">Control Unit Invoice Number</Label>
             <Input 
-              value={formData.scuSignature || ''} 
+              value={formData.cuInvoiceNumber || ''} 
               onChange={e => {
-                setFormData({...formData, scuSignature: e.target.value});
-                if (errors.scuSignature) setErrors(prev => ({...prev, scuSignature: ''}));
+                setFormData({...formData, cuInvoiceNumber: e.target.value});
+                if (errors.cuInvoiceNumber) setErrors(prev => ({...prev, cuInvoiceNumber: ''}));
               }}
-              className={`h-10 md:h-11 font-mono text-xs ${errors.scuSignature ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+              className={`h-10 md:h-11 font-mono text-xs ${errors.cuInvoiceNumber ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
             />
-            <ErrorMsg field="scuSignature" />
+            <ErrorMsg field="cuInvoiceNumber" />
           </div>
 
         </div>

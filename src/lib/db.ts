@@ -1,3 +1,6 @@
+import { storage } from './firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
 export interface Receipt {
   id: string;
   imageBlob?: Blob; // Local only, before upload
@@ -13,13 +16,26 @@ export interface Receipt {
   category: string;
   buyerName?: string;
   buyerPin?: string;
-  scuSignature?: string;
+  cuInvoiceNumber?: string;
   status: 'pending' | 'synced';
   createdAt: number;
   ownerId?: string;
 }
 
-export async function saveReceipt(receipt: Receipt, phone?: string) {
+export async function saveReceipt(receipt: Receipt, phone?: string): Promise<string | undefined> {
+  let finalImageUrl = receipt.imageUrl;
+
+  if (receipt.imageBlob) {
+    try {
+      const storageRef = ref(storage, `receipts/${receipt.id}.jpg`);
+      await uploadBytes(storageRef, receipt.imageBlob);
+      finalImageUrl = await getDownloadURL(storageRef);
+    } catch (error) {
+      console.error('Failed to upload image to Firebase Storage:', error);
+      throw new Error('Failed to upload image to cloud storage');
+    }
+  }
+
   const formData = new FormData();
   formData.append('id', receipt.id);
   formData.append('merchantName', receipt.merchantName);
@@ -33,14 +49,13 @@ export async function saveReceipt(receipt: Receipt, phone?: string) {
   formData.append('category', receipt.category);
   if (receipt.buyerName) formData.append('buyerName', receipt.buyerName);
   if (receipt.buyerPin) formData.append('buyerPin', receipt.buyerPin);
-  if (receipt.scuSignature) formData.append('scuSignature', receipt.scuSignature);
+  if (receipt.cuInvoiceNumber) formData.append('cuInvoiceNumber', receipt.cuInvoiceNumber);
   formData.append('status', 'synced');
   formData.append('createdAt', receipt.createdAt.toString());
   if (phone) formData.append('phone', phone);
   
-  if (receipt.imageBlob) {
-    // Append the image blob with a filename
-    formData.append('image', receipt.imageBlob, `receipt-${receipt.id}.jpg`);
+  if (finalImageUrl) {
+    formData.append('imageUrl', finalImageUrl);
   }
 
   const response = await fetch('/api/receipts', {
@@ -51,6 +66,8 @@ export async function saveReceipt(receipt: Receipt, phone?: string) {
   if (!response.ok) {
     throw new Error('Failed to save receipt to backend');
   }
+
+  return finalImageUrl;
 }
 
 export async function getReceipts(): Promise<Receipt[]> {

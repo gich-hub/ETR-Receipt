@@ -12,7 +12,7 @@ export interface OCRResult {
   category?: string;
   buyerName?: string;
   buyerPin?: string;
-  scuSignature?: string;
+  cuInvoiceNumber?: string;
 }
 
 export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
@@ -47,9 +47,9 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       - Category (e.g., Meals, Transport, Lodging, Supplies, Entertainment)
       - Buyer Name (by default the receipt should contain the buyer name, extract it if present)
       - Buyer PIN (by default the receipt should contain the buyer PIN, extract it if present)
-      - SCU Signature (usually a long alphanumeric string or hash at the bottom)
+      - Control Unit Invoice Number (a numeric number issued by KRA, usually alongside a QR code)
 
-      Return a JSON object with these keys: merchantName, merchantKraPin, invoiceNumber, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, scuSignature.
+      Return a JSON object with these keys: merchantName, merchantKraPin, invoiceNumber, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, cuInvoiceNumber.
       If a value is not found, omit the key or return null.
     `;
 
@@ -85,7 +85,7 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
             category: { type: Type.STRING, description: "The expense category" },
             buyerName: { type: Type.STRING, description: "The name of the buyer" },
             buyerPin: { type: Type.STRING, description: "The PIN of the buyer" },
-            scuSignature: { type: Type.STRING, description: "The SCU Signature or receipt hash" }
+            cuInvoiceNumber: { type: Type.STRING, description: "The Control Unit Invoice Number (numeric)" }
           },
           required: ["merchantName", "date", "totalAmount", "currency", "category"]
         }

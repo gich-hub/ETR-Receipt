@@ -36,7 +36,7 @@ db.exec(`
     category TEXT,
     buyerName TEXT,
     buyerPin TEXT,
-    scuSignature TEXT,
+    cuInvoiceNumber TEXT,
     status TEXT,
     createdAt INTEGER,
     imageFilename TEXT
@@ -60,12 +60,12 @@ try {
           id, merchantName, merchantKraPin, invoiceNumber, date, 
           totalTaxableAmount, totalTax, totalAmount, 
           currency, category, buyerName, buyerPin, 
-          scuSignature, status, createdAt, imageFilename
+          cuInvoiceNumber, status, createdAt, imageFilename
         ) VALUES (
           @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
           @totalTaxableAmount, @totalTax, @totalAmount, 
           @currency, @category, @buyerName, @buyerPin, 
-          @scuSignature, @status, @createdAt, @imageFilename
+          @cuInvoiceNumber, @status, @createdAt, @imageFilename
         )
       `);
       
@@ -93,7 +93,7 @@ try {
           category: receipt.category,
           buyerName: receipt.buyerName,
           buyerPin: receipt.buyerPin,
-          scuSignature: receipt.scuSignature,
+          cuInvoiceNumber: receipt.cuInvoiceNumber,
           status: receipt.status || 'synced',
           createdAt: parseInt(receipt.createdAt, 10) || Date.now(),
           imageFilename: receipt.imageFilename || ''
@@ -150,7 +150,10 @@ async function startServer() {
       
       const mappedReceipts = receipts.map(r => ({
         ...r,
-        imageUrl: r.imageFilename ? `/api/images/${r.imageFilename}` : undefined
+        // If it starts with http, it's a Firebase URL. Otherwise, it's a local filename.
+        imageUrl: r.imageFilename 
+          ? (r.imageFilename.startsWith('http') ? r.imageFilename : `/api/images/${r.imageFilename}`) 
+          : undefined
       }));
       
       res.json(mappedReceipts);
@@ -161,18 +164,18 @@ async function startServer() {
   });
 
   // POST new receipt or update existing
-  app.post('/api/receipts', upload.single('image'), async (req, res) => {
+  app.post('/api/receipts', upload.none(), async (req, res) => {
     try {
       const { 
         id, merchantName, merchantKraPin, invoiceNumber, date, 
         totalTaxableAmount, totalTax, totalAmount, 
         currency, category, buyerName, buyerPin, 
-        scuSignature, status, createdAt
+        cuInvoiceNumber, status, createdAt, imageUrl
       } = req.body;
       
-      let imageFilename = req.file ? req.file.filename : '';
+      let imageFilename = imageUrl || '';
 
-      // If no new image was uploaded, keep the existing one
+      // If no new image was provided, keep the existing one
       if (!imageFilename) {
         const existing = db.prepare('SELECT imageFilename FROM receipts WHERE id = ?').get(id) as any;
         if (existing && existing.imageFilename) {
@@ -185,12 +188,12 @@ async function startServer() {
           id, merchantName, merchantKraPin, invoiceNumber, date, 
           totalTaxableAmount, totalTax, totalAmount, 
           currency, category, buyerName, buyerPin, 
-          scuSignature, status, createdAt, imageFilename
+          cuInvoiceNumber, status, createdAt, imageFilename
         ) VALUES (
           @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
           @totalTaxableAmount, @totalTax, @totalAmount, 
           @currency, @category, @buyerName, @buyerPin, 
-          @scuSignature, @status, @createdAt, @imageFilename
+          @cuInvoiceNumber, @status, @createdAt, @imageFilename
         )
       `);
 
@@ -207,7 +210,7 @@ async function startServer() {
         category: category || 'Other',
         buyerName: buyerName || null,
         buyerPin: buyerPin || null,
-        scuSignature: scuSignature || null,
+        cuInvoiceNumber: cuInvoiceNumber || null,
         status: status || 'synced',
         createdAt: parseInt(createdAt, 10) || Date.now(),
         imageFilename
@@ -229,8 +232,8 @@ async function startServer() {
       
       db.prepare('DELETE FROM receipts WHERE id = ?').run(idToDelete);
 
-      // Delete the image file if it exists
-      if (existing && existing.imageFilename) {
+      // Delete the image file if it exists and is a local file
+      if (existing && existing.imageFilename && !existing.imageFilename.startsWith('http')) {
         const imagePath = path.join(IMAGES_DIR, existing.imageFilename);
         if (fs.existsSync(imagePath)) {
           await fs.promises.unlink(imagePath);
@@ -260,7 +263,9 @@ async function startServer() {
       if (!receipt || !receipt.imageFilename) return next();
 
       const baseUrl = process.env.APP_URL || `http://${req.headers.host}`;
-      const imageUrl = `${baseUrl}/api/images/${receipt.imageFilename}`;
+      const imageUrl = receipt.imageFilename.startsWith('http') 
+        ? receipt.imageFilename 
+        : `${baseUrl}/api/images/${receipt.imageFilename}`;
       const title = `Receipt: ${receipt.merchantName} - ${receipt.currency} ${receipt.totalAmount}`;
       
       const metaTags = `
