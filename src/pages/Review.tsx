@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { OCRResult } from '@/lib/gemini';
-import { saveReceipt, getReceipt, deleteReceipt, Receipt } from '@/lib/db';
+import { saveReceipt, getReceipt, getReceipts, deleteReceipt, Receipt } from '@/lib/db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ArrowLeft, Save, Trash2, Loader2, CheckCircle2, AlertCircle, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Maximize2, TrendingUp } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Persona } from './Home';
 
@@ -17,6 +17,7 @@ export function Review() {
   const [formData, setFormData] = useState<Partial<Receipt>>({
     merchantName: '',
     merchantKraPin: '',
+    invoiceNumber: '',
     date: new Date().toISOString().split('T')[0],
     totalTaxableAmount: undefined,
     totalTax: undefined,
@@ -33,8 +34,11 @@ export function Review() {
   const [existingReceipt, setExistingReceipt] = useState<Receipt | null>(null);
   const [showSuccess, setShowSuccess] = useState(false);
   const [savedReceiptId, setSavedReceiptId] = useState<string | null>(null);
+  const [monthlyTotal, setMonthlyTotal] = useState<number>(0);
+  const [monthlyCount, setMonthlyCount] = useState<number>(0);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showEnlargedImage, setShowEnlargedImage] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -99,19 +103,23 @@ export function Review() {
 
     if (!formData.date) newErrors.date = "Date is required";
     
-    if (formData.totalTaxableAmount === undefined || formData.totalTaxableAmount === null || isNaN(Number(formData.totalTaxableAmount))) {
-      newErrors.totalTaxableAmount = "Required (numeric)";
-    } else if (Number(formData.totalTaxableAmount) < 0) {
-      newErrors.totalTaxableAmount = "Must be positive";
+    if (formData.totalTaxableAmount !== undefined && formData.totalTaxableAmount !== null && formData.totalTaxableAmount !== '') {
+      if (isNaN(Number(formData.totalTaxableAmount))) {
+        newErrors.totalTaxableAmount = "Must be numeric";
+      } else if (Number(formData.totalTaxableAmount) < 0) {
+        newErrors.totalTaxableAmount = "Must be positive";
+      }
     }
 
-    if (formData.totalTax === undefined || formData.totalTax === null || isNaN(Number(formData.totalTax))) {
-      newErrors.totalTax = "Required (numeric)";
-    } else if (Number(formData.totalTax) < 0) {
-      newErrors.totalTax = "Must be positive";
+    if (formData.totalTax !== undefined && formData.totalTax !== null && formData.totalTax !== '') {
+      if (isNaN(Number(formData.totalTax))) {
+        newErrors.totalTax = "Must be numeric";
+      } else if (Number(formData.totalTax) < 0) {
+        newErrors.totalTax = "Must be positive";
+      }
     }
 
-    if (formData.totalAmount === undefined || formData.totalAmount === null || isNaN(Number(formData.totalAmount))) {
+    if (formData.totalAmount === undefined || formData.totalAmount === null || formData.totalAmount === '' || isNaN(Number(formData.totalAmount))) {
       newErrors.totalAmount = "Required (numeric)";
     } else if (Number(formData.totalAmount) <= 0) {
       newErrors.totalAmount = "Must be greater than 0";
@@ -137,9 +145,10 @@ export function Review() {
         imageUrl: existingReceipt?.imageUrl,
         merchantName: formData.merchantName || 'Unknown',
         merchantKraPin: formData.merchantKraPin,
+        invoiceNumber: formData.invoiceNumber,
         date: formData.date || new Date().toISOString().split('T')[0],
-        totalTaxableAmount: formData.totalTaxableAmount ? Number(formData.totalTaxableAmount) : undefined,
-        totalTax: formData.totalTax ? Number(formData.totalTax) : undefined,
+        totalTaxableAmount: (formData.totalTaxableAmount !== undefined && formData.totalTaxableAmount !== null && formData.totalTaxableAmount !== '') ? Number(formData.totalTaxableAmount) : undefined,
+        totalTax: (formData.totalTax !== undefined && formData.totalTax !== null && formData.totalTax !== '') ? Number(formData.totalTax) : undefined,
         totalAmount: Number(formData.totalAmount) || 0,
         currency: formData.currency || 'USD',
         category: formData.category || 'Other',
@@ -153,6 +162,29 @@ export function Review() {
       await saveReceipt(receiptToSave, state?.persona?.phone);
       
       setSavedReceiptId(receiptToSave.id);
+      
+      // Calculate monthly total
+      try {
+        const allReceipts = await getReceipts();
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+        
+        const userReceipts = allReceipts.filter(r => {
+          const rDate = new Date(r.date);
+          const isCurrentMonth = rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
+          // If a persona is selected, filter by their PIN, otherwise just use all receipts
+          const matchesUser = state?.persona?.kraPin ? (r.buyerPin === state.persona.kraPin) : true;
+          return isCurrentMonth && matchesUser;
+        });
+        
+        const total = userReceipts.reduce((sum, r) => sum + (Number(r.totalAmount) || 0), 0);
+        setMonthlyTotal(total);
+        setMonthlyCount(userReceipts.length);
+      } catch (err) {
+        console.error("Failed to calculate monthly total", err);
+      }
+
       setShowSuccess(true);
     } catch (error) {
       console.error("Failed to save", error);
@@ -207,7 +239,20 @@ export function Review() {
           </p>
         </div>
         
-        <div className="flex flex-col gap-3 w-full max-w-xs pt-4">
+        <div className="w-full max-w-xs bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col items-center justify-center space-y-1">
+          <div className="flex items-center gap-2 text-blue-600 font-medium mb-1">
+            <TrendingUp className="w-4 h-4" />
+            <span className="text-sm uppercase tracking-wider">This Month's Total</span>
+          </div>
+          <div className="text-2xl font-bold text-blue-900">
+            {formData.currency || 'KES'} {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+          <div className="text-xs text-blue-600/80 font-medium">
+            Across {monthlyCount} receipt{monthlyCount === 1 ? '' : 's'}
+          </div>
+        </div>
+        
+        <div className="flex flex-col gap-3 w-full max-w-xs pt-2">
           <Button 
             className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white flex items-center justify-center gap-2 h-12 rounded-xl text-base shadow-lg shadow-green-600/20 transition-all hover:-translate-y-1"
             onClick={() => window.open(waUrl, '_blank')}
@@ -272,14 +317,24 @@ export function Review() {
 
       <main className="flex-1 p-4 md:p-6 space-y-4 md:space-y-6 max-w-2xl mx-auto w-full">
         {/* Image Preview */}
-        <div className="rounded-xl overflow-hidden border bg-gray-100 shadow-inner h-[200px] md:h-[300px] flex items-center justify-center relative group">
+        <div 
+          className="rounded-xl overflow-hidden border bg-gray-100 shadow-inner h-[200px] md:h-[300px] flex items-center justify-center relative group cursor-pointer"
+          onClick={() => imagePreview && setShowEnlargedImage(true)}
+        >
           {imagePreview ? (
-            <img 
-              src={imagePreview} 
-              alt="Receipt" 
-              className="w-full h-full object-contain" 
-              referrerPolicy="no-referrer"
-            />
+            <>
+              <img 
+                src={imagePreview} 
+                alt="Receipt" 
+                className="w-full h-full object-contain transition-transform group-hover:scale-[1.02]" 
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                <div className="bg-black/50 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                  <Maximize2 className="w-5 h-5" />
+                </div>
+              </div>
+            </>
           ) : (
             <div className="text-gray-400 text-sm md:text-base">No Image</div>
           )}
@@ -318,6 +373,19 @@ export function Review() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
+              <Label field="invoiceNumber">Invoice/Receipt Number</Label>
+              <Input 
+                value={formData.invoiceNumber || ''} 
+                onChange={e => {
+                  setFormData({...formData, invoiceNumber: e.target.value});
+                  if (errors.invoiceNumber) setErrors(prev => ({...prev, invoiceNumber: ''}));
+                }}
+                placeholder="e.g. INV-001"
+                className={`h-10 md:h-11 ${errors.invoiceNumber ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+              />
+              <ErrorMsg field="invoiceNumber" />
+            </div>
+            <div>
               <Label field="date">Date</Label>
               <Input 
                 type="date"
@@ -330,6 +398,9 @@ export function Review() {
               />
               <ErrorMsg field="date" />
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs md:text-sm font-medium text-gray-700 mb-1">Category</label>
               <select 
@@ -430,6 +501,35 @@ export function Review() {
 
         </div>
       </main>
+
+      {/* Enlarged Image Modal */}
+      {showEnlargedImage && imagePreview && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm" 
+          onClick={() => setShowEnlargedImage(false)}
+        >
+          <div className="relative w-full h-full flex items-center justify-center">
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="absolute top-4 right-4 text-white hover:bg-white/20 z-50 bg-black/50 rounded-full"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowEnlargedImage(false);
+              }}
+            >
+              <X className="w-6 h-6" />
+            </Button>
+            <img 
+              src={imagePreview} 
+              alt="Enlarged Receipt" 
+              className="max-w-full max-h-full object-contain select-none" 
+              referrerPolicy="no-referrer"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Warning Modal */}
       {showWarningModal && (

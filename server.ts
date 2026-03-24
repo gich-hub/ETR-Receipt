@@ -4,38 +4,112 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const IMAGES_DIR = path.join(DATA_DIR, 'images');
+const DB_FILE = path.join(DATA_DIR, 'receipts.db');
 const CSV_FILE = path.join(DATA_DIR, 'receipts.csv');
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
-// Initialize CSV with headers if it doesn't exist
-const CSV_HEADERS = [
-  'id', 'merchantName', 'merchantKraPin', 'date', 
-  'totalTaxableAmount', 'totalTax', 'totalAmount', 
-  'currency', 'category', 'buyerName', 'buyerPin', 
-  'scuSignature', 'status', 'createdAt', 'imageFilename'
-];
-if (!fs.existsSync(CSV_FILE)) {
-  fs.writeFileSync(CSV_FILE, CSV_HEADERS.join(',') + '\n', 'utf-8');
-}
+// Initialize SQLite Database
+const db = new Database(DB_FILE);
+db.pragma('journal_mode = WAL');
 
-// Helper to escape CSV fields
-const escapeCSV = (str: string | number | undefined | null) => {
-  if (str === undefined || str === null) return '';
-  const s = String(str);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-    return `"${s.replace(/"/g, '""')}"`;
+db.exec(`
+  CREATE TABLE IF NOT EXISTS receipts (
+    id TEXT PRIMARY KEY,
+    merchantName TEXT,
+    merchantKraPin TEXT,
+    invoiceNumber TEXT,
+    date TEXT,
+    totalTaxableAmount REAL,
+    totalTax REAL,
+    totalAmount REAL,
+    currency TEXT,
+    category TEXT,
+    buyerName TEXT,
+    buyerPin TEXT,
+    scuSignature TEXT,
+    status TEXT,
+    createdAt INTEGER,
+    imageFilename TEXT
+  )
+`);
+
+// Migrate existing CSV data to SQLite if DB is empty and CSV exists
+try {
+  const countStmt = db.prepare('SELECT COUNT(*) as count FROM receipts');
+  const { count } = countStmt.get() as { count: number };
+  
+  if (count === 0 && fs.existsSync(CSV_FILE)) {
+    console.log('Migrating data from CSV to SQLite...');
+    const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
+    const lines = fileContent.trim().split('\n');
+    
+    if (lines.length > 1) {
+      const headers = lines[0].split(',');
+      const insertStmt = db.prepare(`
+        INSERT INTO receipts (
+          id, merchantName, merchantKraPin, invoiceNumber, date, 
+          totalTaxableAmount, totalTax, totalAmount, 
+          currency, category, buyerName, buyerPin, 
+          scuSignature, status, createdAt, imageFilename
+        ) VALUES (
+          @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
+          @totalTaxableAmount, @totalTax, @totalAmount, 
+          @currency, @category, @buyerName, @buyerPin, 
+          @scuSignature, @status, @createdAt, @imageFilename
+        )
+      `);
+      
+      const insertMany = db.transaction((receipts) => {
+        for (const receipt of receipts) insertStmt.run(receipt);
+      });
+      
+      const receiptsToInsert = lines.slice(1).map((line) => {
+        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
+        const receipt: any = {};
+        headers.forEach((header, index) => {
+          receipt[header] = values[index];
+        });
+        
+        return {
+          id: receipt.id,
+          merchantName: receipt.merchantName,
+          merchantKraPin: receipt.merchantKraPin,
+          invoiceNumber: receipt.invoiceNumber,
+          date: receipt.date,
+          totalTaxableAmount: receipt.totalTaxableAmount ? parseFloat(receipt.totalTaxableAmount) : null,
+          totalTax: receipt.totalTax ? parseFloat(receipt.totalTax) : null,
+          totalAmount: parseFloat(receipt.totalAmount) || 0,
+          currency: receipt.currency,
+          category: receipt.category,
+          buyerName: receipt.buyerName,
+          buyerPin: receipt.buyerPin,
+          scuSignature: receipt.scuSignature,
+          status: receipt.status || 'synced',
+          createdAt: parseInt(receipt.createdAt, 10) || Date.now(),
+          imageFilename: receipt.imageFilename || ''
+        };
+      });
+      
+      insertMany(receiptsToInsert);
+      console.log(`Migrated ${receiptsToInsert.length} receipts to SQLite.`);
+      
+      // Rename CSV to backup
+      fs.renameSync(CSV_FILE, `${CSV_FILE}.bak`);
+    }
   }
-  return s;
-};
+} catch (err) {
+  console.error('Migration error:', err);
+}
 
 // Multer setup for image uploads
 const storage = multer.diskStorage({
@@ -70,50 +144,16 @@ async function startServer() {
   app.use('/api/images', express.static(IMAGES_DIR));
 
   // GET all receipts
-  app.get('/api/receipts', (req, res) => {
-    console.log('Fetching receipts from:', CSV_FILE);
+  app.get('/api/receipts', async (req, res) => {
     try {
-      if (!fs.existsSync(CSV_FILE)) {
-        console.log('CSV file does not exist, returning empty array');
-        return res.json([]);
-      }
-      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
-      const lines = fileContent.trim().split('\n');
-      console.log(`Found ${lines.length} lines in CSV`);
-      if (lines.length <= 1) {
-        return res.json([]);
-      }
-      const headers = lines[0].split(',');
+      const receipts = db.prepare('SELECT * FROM receipts ORDER BY createdAt DESC').all() as any[];
       
-      const receipts = lines.slice(1).map((line, i) => {
-        try {
-          // Simple CSV parser
-          const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.replace(/^"|"$/g, '').replace(/""/g, '"'));
-          const receipt: any = {};
-          headers.forEach((header, index) => {
-            receipt[header] = values[index];
-          });
-          
-          // Type conversions
-          if (receipt.totalTaxableAmount) receipt.totalTaxableAmount = parseFloat(receipt.totalTaxableAmount);
-          if (receipt.totalTax) receipt.totalTax = parseFloat(receipt.totalTax);
-          receipt.totalAmount = parseFloat(receipt.totalAmount) || 0;
-          receipt.createdAt = parseInt(receipt.createdAt, 10) || Date.now();
-          if (receipt.imageFilename) {
-            receipt.imageUrl = `/api/images/${receipt.imageFilename}`;
-          }
-          return receipt;
-        } catch (e) {
-          console.error(`Error parsing line ${i + 1}:`, line, e);
-          return null;
-        }
-      }).filter(Boolean);
+      const mappedReceipts = receipts.map(r => ({
+        ...r,
+        imageUrl: r.imageFilename ? `/api/images/${r.imageFilename}` : undefined
+      }));
       
-      // Sort by createdAt descending
-      receipts.sort((a: any, b: any) => b.createdAt - a.createdAt);
-      
-      console.log(`Returning ${receipts.length} receipts`);
-      res.json(receipts);
+      res.json(mappedReceipts);
     } catch (error) {
       console.error('Error reading receipts:', error);
       res.status(500).json({ error: 'Failed to read receipts' });
@@ -121,71 +161,57 @@ async function startServer() {
   });
 
   // POST new receipt or update existing
-  app.post('/api/receipts', upload.single('image'), (req, res) => {
+  app.post('/api/receipts', upload.single('image'), async (req, res) => {
     try {
       const { 
-        id, merchantName, merchantKraPin, date, 
+        id, merchantName, merchantKraPin, invoiceNumber, date, 
         totalTaxableAmount, totalTax, totalAmount, 
         currency, category, buyerName, buyerPin, 
-        scuSignature, status, createdAt, phone
+        scuSignature, status, createdAt
       } = req.body;
       
       let imageFilename = req.file ? req.file.filename : '';
 
-      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
-      const lines = fileContent.trim().split('\n');
-      let existingImageFilename = '';
-      let isUpdate = false;
-
-      // Check if receipt exists and get its imageFilename
-      for (let i = lines.length - 1; i >= 1; i--) {
-        const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-        if (values[0] === id) {
-          isUpdate = true;
-          const foundImage = values[values.length - 1]?.replace(/^"|"$/g, '') || '';
-          if (foundImage) {
-            existingImageFilename = foundImage;
-            break;
-          }
+      // If no new image was uploaded, keep the existing one
+      if (!imageFilename) {
+        const existing = db.prepare('SELECT imageFilename FROM receipts WHERE id = ?').get(id) as any;
+        if (existing && existing.imageFilename) {
+          imageFilename = existing.imageFilename;
         }
       }
 
-      // If no new image was uploaded, keep the existing one
-      if (!imageFilename && isUpdate) {
-        imageFilename = existingImageFilename;
-      }
+      const stmt = db.prepare(`
+        INSERT OR REPLACE INTO receipts (
+          id, merchantName, merchantKraPin, invoiceNumber, date, 
+          totalTaxableAmount, totalTax, totalAmount, 
+          currency, category, buyerName, buyerPin, 
+          scuSignature, status, createdAt, imageFilename
+        ) VALUES (
+          @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
+          @totalTaxableAmount, @totalTax, @totalAmount, 
+          @currency, @category, @buyerName, @buyerPin, 
+          @scuSignature, @status, @createdAt, @imageFilename
+        )
+      `);
 
-      const row = [
+      stmt.run({
         id,
-        merchantName,
-        merchantKraPin,
-        date,
-        totalTaxableAmount,
-        totalTax,
-        totalAmount,
-        currency,
-        category,
-        buyerName,
-        buyerPin,
-        scuSignature,
-        status || 'synced',
-        createdAt,
+        merchantName: merchantName || 'Unknown',
+        merchantKraPin: merchantKraPin || null,
+        invoiceNumber: invoiceNumber || null,
+        date: date || new Date().toISOString().split('T')[0],
+        totalTaxableAmount: totalTaxableAmount ? parseFloat(totalTaxableAmount) : null,
+        totalTax: totalTax ? parseFloat(totalTax) : null,
+        totalAmount: parseFloat(totalAmount) || 0,
+        currency: currency || 'USD',
+        category: category || 'Other',
+        buyerName: buyerName || null,
+        buyerPin: buyerPin || null,
+        scuSignature: scuSignature || null,
+        status: status || 'synced',
+        createdAt: parseInt(createdAt, 10) || Date.now(),
         imageFilename
-      ].map(escapeCSV).join(',');
-
-      if (isUpdate) {
-        // Remove existing rows with this ID and append the new one
-        const newLines = lines.filter((line, index) => {
-          if (index === 0) return true; // Keep headers
-          const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-          return values[0] !== id;
-        });
-        newLines.push(row);
-        fs.writeFileSync(CSV_FILE, newLines.join('\n') + '\n', 'utf-8');
-      } else {
-        // Append new row
-        fs.appendFileSync(CSV_FILE, row + '\n', 'utf-8');
-      }
+      });
 
       res.status(201).json({ success: true, id, imageFilename });
     } catch (error) {
@@ -195,31 +221,19 @@ async function startServer() {
   });
 
   // DELETE a receipt
-  app.delete('/api/receipts/:id', (req, res) => {
+  app.delete('/api/receipts/:id', async (req, res) => {
     try {
       const idToDelete = req.params.id;
-      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
-      const lines = fileContent.trim().split('\n');
       
-      let imageToDelete = '';
-      const newLines = lines.filter((line, index) => {
-        if (index === 0) return true; // Keep headers
-        const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-        if (values[0] === idToDelete) {
-          // imageFilename is the last column
-          imageToDelete = values[values.length - 1]?.replace(/^"|"$/g, ''); 
-          return false;
-        }
-        return true;
-      });
-
-      fs.writeFileSync(CSV_FILE, newLines.join('\n') + '\n', 'utf-8');
+      const existing = db.prepare('SELECT imageFilename FROM receipts WHERE id = ?').get(idToDelete) as any;
+      
+      db.prepare('DELETE FROM receipts WHERE id = ?').run(idToDelete);
 
       // Delete the image file if it exists
-      if (imageToDelete) {
-        const imagePath = path.join(IMAGES_DIR, imageToDelete);
+      if (existing && existing.imageFilename) {
+        const imagePath = path.join(IMAGES_DIR, existing.imageFilename);
         if (fs.existsSync(imagePath)) {
-          fs.unlinkSync(imagePath);
+          await fs.promises.unlink(imagePath);
         }
       }
 
@@ -241,32 +255,13 @@ async function startServer() {
       }
 
       const id = req.params.id;
-      if (!fs.existsSync(CSV_FILE)) return next();
+      const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(id) as any;
       
-      const fileContent = fs.readFileSync(CSV_FILE, 'utf-8');
-      const lines = fileContent.trim().split('\n');
-      
-      let merchantName = 'Receipt';
-      let imageFilename = '';
-      let totalAmount = '';
-      let currency = '';
-      
-      for (let i = lines.length - 1; i >= 1; i--) {
-        const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-        if (values[0] === id) {
-          merchantName = values[1]?.replace(/^"|"$/g, '') || 'Receipt';
-          totalAmount = values[6]?.replace(/^"|"$/g, '') || '';
-          currency = values[7]?.replace(/^"|"$/g, '') || '';
-          imageFilename = values[values.length - 1]?.replace(/^"|"$/g, '') || '';
-          break;
-        }
-      }
-
-      if (!imageFilename) return next();
+      if (!receipt || !receipt.imageFilename) return next();
 
       const baseUrl = process.env.APP_URL || `http://${req.headers.host}`;
-      const imageUrl = `${baseUrl}/api/images/${imageFilename}`;
-      const title = `Receipt: ${merchantName} - ${currency} ${totalAmount}`;
+      const imageUrl = `${baseUrl}/api/images/${receipt.imageFilename}`;
+      const title = `Receipt: ${receipt.merchantName} - ${receipt.currency} ${receipt.totalAmount}`;
       
       const metaTags = `
         <meta property="og:title" content="${title}" />
@@ -277,7 +272,7 @@ async function startServer() {
         <meta name="twitter:image" content="${imageUrl}" />
       `;
       
-      let html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8');
+      let html = await fs.promises.readFile(path.join(process.cwd(), 'index.html'), 'utf-8');
       html = html.replace('</head>', `${metaTags}</head>`);
       
       res.send(html);
@@ -294,6 +289,12 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
 
   app.listen(PORT, "0.0.0.0", () => {

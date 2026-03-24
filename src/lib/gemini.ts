@@ -1,12 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-// Initialize the Gemini API client
-// Note: We use the environment variable for the API key.
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 export interface OCRResult {
   merchantName?: string;
   merchantKraPin?: string;
+  invoiceNumber?: string;
   date?: string;
   totalTaxableAmount?: number;
   totalTax?: number;
@@ -20,6 +17,9 @@ export interface OCRResult {
 
 export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
   try {
+    // Initialize the Gemini API client inside the function
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
     // Convert Blob to Base64
     const base64Data = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -38,6 +38,7 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       Analyze this receipt image. Extract the following information:
       - Merchant Name (or activity name if unclear)
       - Merchant KRA PIN (usually starts with P or A followed by numbers and a letter)
+      - Invoice Number (or receipt number)
       - Date (YYYY-MM-DD format)
       - Total Taxable Amount (number only)
       - Total Tax (number only)
@@ -48,15 +49,23 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       - Buyer PIN (by default the receipt should contain the buyer PIN, extract it if present)
       - SCU Signature (usually a long alphanumeric string or hash at the bottom)
 
-      Return a JSON object with these keys: merchantName, merchantKraPin, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, scuSignature.
+      Return a JSON object with these keys: merchantName, merchantKraPin, invoiceNumber, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, scuSignature.
       If a value is not found, omit the key or return null.
     `;
+
+    // Determine mimeType, fallback to image/jpeg if empty or unsupported
+    let mimeType = imageBlob.type;
+    if (!mimeType || mimeType === 'application/octet-stream' || mimeType === '') {
+      mimeType = 'image/jpeg';
+    } else if (mimeType === 'image/jpg') {
+      mimeType = 'image/jpeg';
+    }
 
     const response = await ai.models.generateContent({
       model: model,
       contents: {
         parts: [
-          { inlineData: { mimeType: imageBlob.type, data: base64Data } },
+          { inlineData: { mimeType: mimeType, data: base64Data } },
           { text: prompt }
         ]
       },
@@ -67,6 +76,7 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
           properties: {
             merchantName: { type: Type.STRING, description: "The name of the merchant" },
             merchantKraPin: { type: Type.STRING, description: "The KRA PIN of the merchant" },
+            invoiceNumber: { type: Type.STRING, description: "The invoice or receipt number" },
             date: { type: Type.STRING, description: "The date of the receipt in YYYY-MM-DD format" },
             totalTaxableAmount: { type: Type.NUMBER, description: "The total taxable amount" },
             totalTax: { type: Type.NUMBER, description: "The total tax amount" },
@@ -90,6 +100,7 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       return {
         merchantName: data.merchantName,
         merchantKraPin: data.merchantKraPin,
+        invoiceNumber: data.invoiceNumber,
         date: data.date,
         totalTaxableAmount: data.totalTaxableAmount,
         totalTax: data.totalTax,

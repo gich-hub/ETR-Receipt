@@ -4,6 +4,7 @@ export interface Receipt {
   imageUrl?: string; // Remote
   merchantName: string;
   merchantKraPin?: string;
+  invoiceNumber?: string;
   date: string;
   totalTaxableAmount?: number;
   totalTax?: number;
@@ -23,6 +24,7 @@ export async function saveReceipt(receipt: Receipt, phone?: string) {
   formData.append('id', receipt.id);
   formData.append('merchantName', receipt.merchantName);
   if (receipt.merchantKraPin) formData.append('merchantKraPin', receipt.merchantKraPin);
+  if (receipt.invoiceNumber) formData.append('invoiceNumber', receipt.invoiceNumber);
   formData.append('date', receipt.date);
   if (receipt.totalTaxableAmount !== undefined) formData.append('totalTaxableAmount', receipt.totalTaxableAmount.toString());
   if (receipt.totalTax !== undefined) formData.append('totalTax', receipt.totalTax.toString());

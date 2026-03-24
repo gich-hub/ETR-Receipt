@@ -30,22 +30,27 @@ export function Export() {
     
     // Title
     doc.setFontSize(18);
-    doc.text("Expense Report", 14, 22);
+    doc.text("iTax Purchases Report", 14, 22);
     doc.setFontSize(11);
     doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
 
     // Table
     const tableData = receipts.map(r => [
-      r.date,
+      r.merchantKraPin || '',
       r.merchantName,
+      r.date,
+      r.invoiceNumber || r.id,
       r.category,
-      `${r.currency} ${r.totalAmount.toFixed(2)}`
+      r.totalAmount.toFixed(2),
+      r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',
+      r.totalTax !== undefined ? r.totalTax.toFixed(2) : ''
     ]);
 
     autoTable(doc, {
-      head: [['Date', 'Merchant', 'Category', 'Amount']],
+      head: [['PIN of Supplier', 'Name of Supplier', 'Date', 'Invoice No', 'Description', 'Total', 'Taxable', 'VAT']],
       body: tableData,
       startY: 40,
+      styles: { fontSize: 8 },
     });
 
     // Add Images
@@ -96,18 +101,30 @@ export function Export() {
       }
     }
 
-    doc.save("expenses.pdf");
+    doc.save("itax_purchases_export.pdf");
   };
 
   const generateCSV = () => {
-    const headers = ["Date", "Merchant", "Category", "Currency", "Amount", "Status"];
+    const headers = [
+      "PIN of Supplier", 
+      "Name of Supplier", 
+      "Invoice/Receipt Date", 
+      "Invoice/Receipt Number", 
+      "Description of Goods/Services", 
+      "Total Invoice Amount", 
+      "Taxable Value", 
+      "VAT Amount"
+    ];
+    
     const rows = receipts.map(r => [
-      r.date,
+      `"${r.merchantKraPin || ''}"`,
       `"${r.merchantName.replace(/"/g, '""')}"`, // Escape quotes
-      r.category,
-      r.currency,
+      `"${r.date}"`,
+      `"${r.invoiceNumber || r.id}"`,
+      `"${r.category}"`,
       r.totalAmount.toFixed(2),
-      r.status
+      r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',
+      r.totalTax !== undefined ? r.totalTax.toFixed(2) : ''
     ]);
 
     const csvContent = [
@@ -119,7 +136,7 @@ export function Export() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", "expenses.csv");
+    link.setAttribute("download", "itax_purchases_export.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

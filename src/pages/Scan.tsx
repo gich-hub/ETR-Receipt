@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { CameraCapture } from '@/components/CameraCapture';
-import { analyzeReceipt } from '@/lib/gemini';
+import { analyzeReceipt, OCRResult } from '@/lib/gemini';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertTriangle } from 'lucide-react';
 
 export function Scan() {
   const navigate = useNavigate();
@@ -13,6 +13,8 @@ export function Scan() {
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mismatchWarning, setMismatchWarning] = useState<string | null>(null);
+  const [pendingResult, setPendingResult] = useState<{ file: File; result: OCRResult } | null>(null);
   const hasAutoProcessed = useRef(false);
 
   const handleCapture = async (file: File) => {
@@ -28,7 +30,8 @@ export function Scan() {
         const personaPin = persona.kraPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         
         if (scannedPin && personaPin && scannedPin !== personaPin) {
-          setError(`PIN Mismatch: The receipt is for buyer PIN ${result.buyerPin}, but the selected persona has PIN ${persona.kraPin}.`);
+          setMismatchWarning(`The receipt is for buyer PIN ${result.buyerPin}, but the selected persona has PIN ${persona.kraPin}.`);
+          setPendingResult({ file, result });
           setIsAnalyzing(false);
           return;
         }
@@ -47,6 +50,24 @@ export function Scan() {
       setError("Failed to analyze receipt. Please try again.");
       setIsAnalyzing(false);
     }
+  };
+
+  const handleProceed = () => {
+    if (pendingResult) {
+      navigate('/review', { 
+        state: { 
+          image: pendingResult.file, 
+          ocrData: pendingResult.result,
+          persona: persona 
+        } 
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    setMismatchWarning(null);
+    setPendingResult(null);
+    setError(null);
   };
 
   useEffect(() => {
@@ -81,6 +102,23 @@ export function Scan() {
             </div>
             <h2 className="text-lg md:text-xl font-semibold text-gray-900">Analyzing Receipt...</h2>
             <p className="text-sm md:text-base text-gray-500">Extracting merchant, date, and amount</p>
+          </div>
+        ) : mismatchWarning ? (
+          <div className="w-full max-w-md space-y-4 md:space-y-6 bg-yellow-50 p-6 rounded-xl border border-yellow-200">
+            <div className="flex items-center gap-3 text-yellow-800 mb-2">
+              <AlertTriangle className="w-6 h-6" />
+              <h2 className="text-lg font-semibold">PIN Mismatch Detected</h2>
+            </div>
+            <p className="text-sm text-yellow-700">{mismatchWarning}</p>
+            <p className="text-sm text-yellow-700 font-medium">Do you want to proceed anyway?</p>
+            <div className="flex gap-3 pt-4">
+              <Button variant="outline" className="flex-1 border-yellow-300 text-yellow-800 hover:bg-yellow-100" onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white" onClick={handleProceed}>
+                Proceed Anyway
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="w-full max-w-md space-y-4 md:space-y-6">

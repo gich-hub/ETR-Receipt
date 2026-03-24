@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Camera, FileText, Search, Building2, ChevronRight, Edit2, Save, X, Menu, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { Camera, FileText, Search, Building2, ChevronRight, Edit2, Save, X, Menu, Image as ImageIcon, Plus, Trash2, AlertCircle, Loader2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getReceipts, Receipt } from '@/lib/db';
 import { Card } from '@/components/ui/card';
@@ -7,6 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
+import { QRCodeSVG } from 'qrcode.react';
+
+import imageCompression from 'browser-image-compression';
 
 export interface Persona {
   id: string;
@@ -28,11 +31,30 @@ export function Home() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [editForm, setEditForm] = useState<Persona | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && selectedPersona) {
-      navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+      if (!file.type.startsWith('image/')) {
+        navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+      } else {
+        try {
+          setIsCompressing(true);
+          const options = {
+            maxSizeMB: 1,
+            maxWidthOrHeight: 1920,
+            useWebWorker: true,
+          };
+          const compressedFile = await imageCompression(file, options);
+          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: compressedFile } });
+        } catch (error) {
+          console.error('Error compressing image:', error);
+          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+        } finally {
+          setIsCompressing(false);
+        }
+      }
     }
     // Clear the input so the same file can be selected again if needed
     if (e.target) {
@@ -53,9 +75,11 @@ export function Home() {
       if (parsed.length > 0) {
         setSelectedPersona(parsed[0]);
       } else {
+        setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '' });
         setIsCreating(true);
       }
     } else {
+      setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '' });
       setIsCreating(true);
     }
   }
@@ -130,6 +154,33 @@ export function Home() {
       setIsCreating(true);
     }
   };
+
+  const filteredReceipts = useMemo(() => {
+    if (!selectedPersona) return receipts;
+    return receipts.filter(r => r.buyerPin === selectedPersona.kraPin);
+  }, [receipts, selectedPersona]);
+
+  const groupedReceipts = useMemo(() => {
+    const groups: Record<string, Receipt[]> = {};
+    filteredReceipts.forEach(receipt => {
+      const date = new Date(receipt.date);
+      const monthYear = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      if (!groups[monthYear]) {
+        groups[monthYear] = [];
+      }
+      groups[monthYear].push(receipt);
+    });
+    return groups;
+  }, [filteredReceipts]);
+
+  const pendingCount = useMemo(() => {
+    return filteredReceipts.filter(r => r.status === 'pending').length;
+  }, [filteredReceipts]);
+
+  const showReconciliationAlert = useMemo(() => {
+    const today = new Date();
+    return today.getDate() < 20 && pendingCount > 0;
+  }, [pendingCount]);
 
   if (!selectedPersona && !isCreating) return null;
 
@@ -304,29 +355,39 @@ export function Home() {
               </div>
             ) : selectedPersona ? (
               <>
-                <div className="space-y-1 md:space-y-2">
-                  <h2 className="text-xs md:text-sm font-bold text-gray-400 uppercase tracking-widest">Official Entity Name</h2>
-                  <h3 className="text-xl md:text-2xl font-medium text-gray-800">{selectedPersona.name}</h3>
-                  {selectedPersona.phone && (
-                    <p className="text-xs md:text-sm text-gray-500">Auto-send to: {selectedPersona.phone}</p>
-                  )}
-                </div>
-                
-                <div className="space-y-1 md:space-y-2">
-                  <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">KRA PIN</div>
-                  <div className="text-4xl sm:text-6xl md:text-8xl font-black tracking-tighter text-gray-900 font-mono break-all px-2">
-                    {selectedPersona.kraPin}
+                <div className="flex flex-col md:flex-row items-center justify-between gap-6 md:gap-8">
+                  <div className="flex-1 space-y-6 md:space-y-8 text-center md:text-left">
+                    <div className="space-y-1 md:space-y-2">
+                      <h2 className="text-xs md:text-sm font-bold text-gray-400 uppercase tracking-widest">Official Entity Name</h2>
+                      <h3 className="text-xl md:text-2xl font-medium text-gray-800">{selectedPersona.name}</h3>
+                      {selectedPersona.phone && (
+                        <p className="text-xs md:text-sm text-gray-500">Auto-send to: {selectedPersona.phone}</p>
+                      )}
+                    </div>
+                    
+                    <div className="space-y-1 md:space-y-2">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">KRA PIN</div>
+                      <div className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter text-gray-900 font-mono break-all px-2 md:px-0">
+                        {selectedPersona.kraPin}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-col items-center justify-center p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+                    <QRCodeSVG value={selectedPersona.kraPin} size={140} level="M" includeMargin={false} />
+                    <span className="text-xs text-gray-400 mt-3 font-medium uppercase tracking-wider">Scan KRA PIN</span>
                   </div>
                 </div>
 
-                <div className="pt-4 md:pt-8 flex flex-col sm:flex-row gap-3">
+                <div className="pt-4 md:pt-8 flex flex-col sm:flex-row gap-3 justify-center md:justify-start">
                   <Button 
                     size="lg" 
                     onClick={() => cameraInputRef.current?.click()}
-                    className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/30 transition-all hover:-translate-y-1 bg-blue-600 hover:bg-blue-700"
+                    disabled={isCompressing}
+                    className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/30 transition-all hover:-translate-y-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-70 disabled:active:scale-100 disabled:hover:-translate-y-0"
                   >
-                    <Camera className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />
-                    Scan Receipt
+                    {isCompressing ? <Loader2 className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3 animate-spin" /> : <Camera className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />}
+                    {isCompressing ? 'Processing...' : 'Scan Receipt'}
                   </Button>
                   <input 
                     type="file" 
@@ -340,10 +401,11 @@ export function Home() {
                     variant="outline"
                     size="lg" 
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-sm hover:shadow-md transition-all hover:-translate-y-1 bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                    disabled={isCompressing}
+                    className="w-full sm:w-auto h-14 md:h-16 px-6 md:px-8 text-base md:text-lg rounded-full shadow-sm hover:shadow-md transition-all hover:-translate-y-1 bg-white border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-70 disabled:active:scale-100 disabled:hover:-translate-y-0"
                   >
-                    <ImageIcon className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />
-                    Upload from Gallery
+                    {isCompressing ? <Loader2 className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3 animate-spin" /> : <ImageIcon className="w-5 h-5 md:w-6 md:h-6 mr-2 md:mr-3" />}
+                    {isCompressing ? 'Processing...' : 'Upload from Gallery'}
                   </Button>
                   <input 
                     type="file" 
@@ -357,10 +419,23 @@ export function Home() {
             ) : null}
           </div>
 
+          {/* Missing Receipt Alert */}
+          {showReconciliationAlert && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3 shadow-sm">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-semibold text-amber-900">Reconciliation Reminder</h4>
+                <p className="text-sm text-amber-700 mt-1">
+                  You have {pendingCount} receipt{pendingCount !== 1 ? 's' : ''} pending reconciliation. Please review and sync them before the 20th of the month deadline.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Recent Submissions */}
           <section className="space-y-4">
             <div className="flex items-center justify-between px-2">
-              <h2 className="text-base md:text-lg font-semibold text-gray-900">Recent Scans</h2>
+              <h2 className="text-base md:text-lg font-semibold text-gray-900">Dashboard</h2>
               <Link to="/export" className="text-sm text-blue-600 font-medium hover:underline">
                 Export All
               </Link>
@@ -368,42 +443,49 @@ export function Home() {
 
             {loading ? (
               <div className="text-center py-8 text-gray-500">Loading...</div>
-            ) : receipts.length === 0 ? (
+            ) : filteredReceipts.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-gray-300">
                 <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500">No receipts yet</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                {receipts.map((receipt) => (
-                  <Card key={receipt.id} className="overflow-hidden hover:shadow-md transition-all border-gray-200">
-                    <Link to={`/receipt/${receipt.id}`}>
-                      <div className="flex items-center p-3 md:p-4 gap-3 md:gap-4">
-                        <div className="w-14 h-14 md:w-16 md:h-16 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden border">
-                           {receipt.imageUrl ? (
-                             <img src={receipt.imageUrl} alt="Receipt" className="w-full h-full object-cover" />
-                           ) : (
-                             <FileText className="w-5 h-5 md:w-6 md:h-6 text-gray-400" />
-                           )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-sm md:text-base text-gray-900 truncate">{receipt.merchantName || "Unknown Merchant"}</h3>
-                          <p className="text-xs md:text-sm text-gray-500 truncate">{receipt.category} • {receipt.date}</p>
-                        </div>
-                        <div className="text-right">
-                          <span className="block font-bold text-sm md:text-base text-gray-900">
-                            {receipt.currency} {receipt.totalAmount.toFixed(2)}
-                          </span>
-                          <span className={cn(
-                            "inline-block mt-1 text-[9px] md:text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full",
-                            receipt.status === 'synced' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
-                          )}>
-                            {receipt.status === 'synced' ? 'Synced' : 'Local'}
-                          </span>
-                        </div>
-                      </div>
-                    </Link>
-                  </Card>
+              <div className="space-y-8">
+                {Object.entries(groupedReceipts).map(([monthYear, monthReceipts]: [string, Receipt[]]) => (
+                  <div key={monthYear} className="space-y-3">
+                    <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider pl-2 border-l-2 border-blue-500">{monthYear}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                      {monthReceipts.map((receipt) => (
+                        <Card key={receipt.id} className="overflow-hidden hover:shadow-md transition-all border-gray-200">
+                          <Link to={`/receipt/${receipt.id}`}>
+                            <div className="flex items-center p-3 md:p-4 gap-3 md:gap-4">
+                              <div className="w-14 h-14 md:w-16 md:h-16 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden border">
+                                 {receipt.imageUrl ? (
+                                   <img src={receipt.imageUrl} alt="Receipt" className="w-full h-full object-cover" />
+                                 ) : (
+                                   <FileText className="w-5 h-5 md:w-6 md:h-6 text-gray-400" />
+                                 )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-semibold text-sm md:text-base text-gray-900 truncate">{receipt.merchantName || "Unknown Merchant"}</h3>
+                                <p className="text-xs md:text-sm text-gray-500 truncate">{receipt.category} • {receipt.date}</p>
+                              </div>
+                              <div className="text-right">
+                                <span className="block font-bold text-sm md:text-base text-gray-900">
+                                  {receipt.currency} {receipt.totalAmount.toFixed(2)}
+                                </span>
+                                <span className={cn(
+                                  "inline-block mt-1 text-[9px] md:text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full",
+                                  receipt.status === 'synced' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"
+                                )}>
+                                  {receipt.status === 'synced' ? 'Synced' : 'Local'}
+                                </span>
+                              </div>
+                            </div>
+                          </Link>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
