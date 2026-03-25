@@ -27,14 +27,12 @@ db.exec(`
     id TEXT PRIMARY KEY,
     merchantName TEXT,
     merchantKraPin TEXT,
-    invoiceNumber TEXT,
     date TEXT,
     totalTaxableAmount REAL,
     totalTax REAL,
     totalAmount REAL,
     currency TEXT,
     category TEXT,
-    buyerName TEXT,
     buyerPin TEXT,
     cuInvoiceNumber TEXT,
     status TEXT,
@@ -57,14 +55,14 @@ try {
       const headers = lines[0].split(',');
       const insertStmt = db.prepare(`
         INSERT INTO receipts (
-          id, merchantName, merchantKraPin, invoiceNumber, date, 
+          id, merchantName, merchantKraPin, date, 
           totalTaxableAmount, totalTax, totalAmount, 
-          currency, category, buyerName, buyerPin, 
+          currency, category, buyerPin, 
           cuInvoiceNumber, status, createdAt, imageFilename
         ) VALUES (
-          @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
+          @id, @merchantName, @merchantKraPin, @date, 
           @totalTaxableAmount, @totalTax, @totalAmount, 
-          @currency, @category, @buyerName, @buyerPin, 
+          @currency, @category, @buyerPin, 
           @cuInvoiceNumber, @status, @createdAt, @imageFilename
         )
       `);
@@ -84,14 +82,12 @@ try {
           id: receipt.id,
           merchantName: receipt.merchantName,
           merchantKraPin: receipt.merchantKraPin,
-          invoiceNumber: receipt.invoiceNumber,
           date: receipt.date,
           totalTaxableAmount: receipt.totalTaxableAmount ? parseFloat(receipt.totalTaxableAmount) : null,
           totalTax: receipt.totalTax ? parseFloat(receipt.totalTax) : null,
           totalAmount: parseFloat(receipt.totalAmount) || 0,
           currency: receipt.currency,
           category: receipt.category,
-          buyerName: receipt.buyerName,
           buyerPin: receipt.buyerPin,
           cuInvoiceNumber: receipt.cuInvoiceNumber,
           status: receipt.status || 'synced',
@@ -163,17 +159,44 @@ async function startServer() {
     }
   });
 
+  // GET a single receipt
+  app.get('/api/receipts/:id', async (req, res) => {
+    try {
+      const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id) as any;
+      if (!receipt) {
+        return res.status(404).json({ error: 'Receipt not found' });
+      }
+      
+      const mappedReceipt = {
+        ...receipt,
+        imageUrl: receipt.imageFilename 
+          ? (receipt.imageFilename.startsWith('http') ? receipt.imageFilename : `/api/images/${receipt.imageFilename}`) 
+          : undefined
+      };
+      
+      res.json(mappedReceipt);
+    } catch (error) {
+      console.error('Error reading receipt:', error);
+      res.status(500).json({ error: 'Failed to read receipt' });
+    }
+  });
+
   // POST new receipt or update existing
-  app.post('/api/receipts', upload.none(), async (req, res) => {
+  app.post('/api/receipts', upload.single('image'), async (req, res) => {
     try {
       const { 
-        id, merchantName, merchantKraPin, invoiceNumber, date, 
+        id, merchantName, merchantKraPin, date, 
         totalTaxableAmount, totalTax, totalAmount, 
-        currency, category, buyerName, buyerPin, 
+        currency, category, buyerPin, 
         cuInvoiceNumber, status, createdAt, imageUrl
       } = req.body;
       
       let imageFilename = imageUrl || '';
+
+      // If a new file was uploaded, use its filename
+      if (req.file) {
+        imageFilename = req.file.filename;
+      }
 
       // If no new image was provided, keep the existing one
       if (!imageFilename) {
@@ -185,14 +208,14 @@ async function startServer() {
 
       const stmt = db.prepare(`
         INSERT OR REPLACE INTO receipts (
-          id, merchantName, merchantKraPin, invoiceNumber, date, 
+          id, merchantName, merchantKraPin, date, 
           totalTaxableAmount, totalTax, totalAmount, 
-          currency, category, buyerName, buyerPin, 
+          currency, category, buyerPin, 
           cuInvoiceNumber, status, createdAt, imageFilename
         ) VALUES (
-          @id, @merchantName, @merchantKraPin, @invoiceNumber, @date, 
+          @id, @merchantName, @merchantKraPin, @date, 
           @totalTaxableAmount, @totalTax, @totalAmount, 
-          @currency, @category, @buyerName, @buyerPin, 
+          @currency, @category, @buyerPin, 
           @cuInvoiceNumber, @status, @createdAt, @imageFilename
         )
       `);
@@ -201,14 +224,12 @@ async function startServer() {
         id,
         merchantName: merchantName || 'Unknown',
         merchantKraPin: merchantKraPin || null,
-        invoiceNumber: invoiceNumber || null,
         date: date || new Date().toISOString().split('T')[0],
         totalTaxableAmount: totalTaxableAmount ? parseFloat(totalTaxableAmount) : null,
         totalTax: totalTax ? parseFloat(totalTax) : null,
         totalAmount: parseFloat(totalAmount) || 0,
         currency: currency || 'USD',
         category: category || 'Other',
-        buyerName: buyerName || null,
         buyerPin: buyerPin || null,
         cuInvoiceNumber: cuInvoiceNumber || null,
         status: status || 'synced',

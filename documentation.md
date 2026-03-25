@@ -1,7 +1,7 @@
 # ETR Receipts Documentation
 
 ## 🎯 Project Purpose
-ETR Receipts is a full-stack web application designed to streamline expense tracking and receipt management by allowing users to scan physical receipts, automatically extract key information (merchant, date, amount) using AI-powered OCR, and associate them with specific business personas or tax entities. It solves the problem of manual data entry and lost paper receipts by digitizing, categorizing, and securely storing expense records in a centralized system.
+ETR Receipts is a full-stack web application designed to streamline expense tracking and receipt management by allowing users to scan physical receipts, automatically extract key information (merchant, date, amount, and KRA-specific CU Invoice Numbers) using AI-powered OCR, and associate them with specific business personas or tax entities. It solves the problem of manual data entry and lost paper receipts by digitizing, categorizing, and securely storing expense records in a centralized system optimized for Kenyan tax compliance.
 
 ## 💡 Value Proposition
 *   **AI-Powered Extraction**: Eliminates manual data entry by leveraging Google's Gemini AI to instantly parse receipt images for critical metadata.
@@ -43,7 +43,7 @@ A monolithic full-stack application serving a React SPA via Vite middleware on a
 **Project Overview:**
 ETR Receipts started as a local-only prototype and has evolved into a full-stack application with AI OCR, dynamic multi-persona support, WhatsApp forwarding, and persistent file storage.
 
-**Current Status (Phase 1):**
+**Current Status (Phase 1 & 2):**
 *   [x] Basic UI and navigation
 *   [x] Camera and gallery integration for receipt scanning
 *   [x] Gemini AI integration for OCR data extraction (upgraded to Gemini 3)
@@ -57,17 +57,24 @@ ETR Receipts started as a local-only prototype and has evolved into a full-stack
 *   [x] Support footer integration
 *   [x] Automated Buyer PIN validation against selected Persona
 *   [x] Interactive receipt image enlargement on the review screen
+*   [x] Receipt editing and updating capabilities
+*   [x] PDF and CSV expense report generation
 
 **Upcoming Phases:**
 
-*   **Phase 2: Enhanced Data Management**
-    *   [ ] Add receipt editing and updating capabilities on the backend
-*   **Phase 3: Analytics & Export**
-    *   [ ] Generate PDF/Excel expense reports per persona
+*   **Phase 3: Analytics & Sync**
     *   [ ] Add monthly spending charts and category breakdowns
     *   [ ] Implement user authentication and cloud sync
 
 ## 📝 Changelog
+
+### [2026-03-25] - Image Transfer Reliability and Field Refinement
+
+#### 🚀 Major Changes
+*   **Robust Image Transfer**: Implemented Base64 encoding for receipt images during the scanning-to-review transition. This ensures images are reliably displayed even if the original file object is lost in the browser's navigation state.
+*   **Field Prioritization**: Removed the generic "Invoice/Receipt Number" field across the entire stack (AI prompt, database, UI, and exports). The "Control Unit Invoice Number" (CU Invoice Number) is now the primary identifier, aligning with KRA ETR requirements.
+*   **Backend API Expansion**: Added a dedicated GET endpoint for individual receipts to improve performance and reliability when editing specific records.
+*   **Type Safety Improvements**: Refactored the Review form to handle numeric inputs as strings, preventing UI crashes and improving the editing experience for partial or non-numeric data.
 
 ### [2026-03-24] - Performance and Storage Optimizations
 

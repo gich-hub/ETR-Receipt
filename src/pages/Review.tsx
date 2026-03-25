@@ -8,25 +8,36 @@ import { ArrowLeft, Save, Trash2, Loader2, CheckCircle2, AlertCircle, ArrowRight
 import { v4 as uuidv4 } from 'uuid';
 import { Persona } from './Home';
 
+interface ReceiptForm {
+  merchantName: string;
+  merchantKraPin: string;
+  date: string;
+  totalTaxableAmount: string | number | undefined;
+  totalTax: string | number | undefined;
+  totalAmount: string | number;
+  currency: string;
+  category: string;
+  buyerPin: string;
+  cuInvoiceNumber: string;
+}
+
 export function Review() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const state = location.state as { image: File; ocrData: OCRResult; persona?: Persona } | null;
+  const state = location.state as { image: File; imagePreview?: string; ocrData: OCRResult; persona?: Persona } | null;
 
-  const [formData, setFormData] = useState<Partial<Receipt>>({
+  const [formData, setFormData] = useState<ReceiptForm>({
     merchantName: '',
     merchantKraPin: '',
-    invoiceNumber: '',
     date: new Date().toISOString().split('T')[0],
-    totalTaxableAmount: undefined,
-    totalTax: undefined,
-    totalAmount: 0,
+    totalTaxableAmount: '',
+    totalTax: '',
+    totalAmount: '',
     currency: 'USD',
     category: 'Meals',
-    buyerName: '',
     buyerPin: '',
-    scuSignature: '',
+    cuInvoiceNumber: '',
   });
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -40,28 +51,63 @@ export function Review() {
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEnlargedImage, setShowEnlargedImage] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
+    console.log("Review Page Mounted. ID:", id, "State:", state);
+    if (state) {
+      console.log("State keys:", Object.keys(state));
+      if (state.imagePreview) console.log("imagePreview length:", state.imagePreview.length);
+      if (state.image) console.log("image file:", state.image.name, state.image.size);
+    }
+    
     if (id) {
       loadExistingReceipt(id);
     } else if (state) {
+      console.log("Loading new receipt from state. Image:", state.image, "Preview exists:", !!state.imagePreview);
       const cleanup = loadNewReceipt(state);
       return cleanup;
     } else {
+      console.warn("No ID and no state found. Navigating home.");
       navigate('/');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadNewReceipt = (state: { image: File; ocrData: OCRResult }) => {
-    const url = URL.createObjectURL(state.image);
-    setImagePreview(url);
-    setFormData(prev => ({
-      ...prev,
-      ...state.ocrData,
-      date: state.ocrData.date || new Date().toISOString().split('T')[0]
-    }));
-    return () => URL.revokeObjectURL(url);
+  const loadNewReceipt = (state: { image: File; imagePreview?: string; ocrData: OCRResult }) => {
+    if (!state.image && !state.imagePreview) {
+      console.error("state.image and state.imagePreview are missing in loadNewReceipt");
+      return;
+    }
+    try {
+      if (state.imagePreview) {
+        console.log("Using base64 image preview from state");
+        setImagePreview(state.imagePreview);
+      } else if (state.image) {
+        const url = URL.createObjectURL(state.image);
+        console.log("Created object URL for image:", url);
+        setImagePreview(url);
+        return () => {
+          console.log("Revoking object URL:", url);
+          URL.revokeObjectURL(url);
+        };
+      }
+      
+      setFormData({
+        merchantName: state.ocrData.merchantName || '',
+        merchantKraPin: state.ocrData.merchantKraPin || '',
+        date: state.ocrData.date || new Date().toISOString().split('T')[0],
+        totalTaxableAmount: state.ocrData.totalTaxableAmount ?? '',
+        totalTax: state.ocrData.totalTax ?? '',
+        totalAmount: state.ocrData.totalAmount ?? '',
+        currency: state.ocrData.currency || 'USD',
+        category: state.ocrData.category || 'Meals',
+        buyerPin: state.ocrData.buyerPin || '',
+        cuInvoiceNumber: state.ocrData.cuInvoiceNumber || '',
+      });
+    } catch (err) {
+      console.error("Error in loadNewReceipt:", err);
+    }
   };
 
   const loadExistingReceipt = async (receiptId: string) => {
@@ -74,7 +120,18 @@ export function Review() {
         return;
       }
       setExistingReceipt(receipt);
-      setFormData(receipt);
+      setFormData({
+        merchantName: receipt.merchantName,
+        merchantKraPin: receipt.merchantKraPin || '',
+        date: receipt.date,
+        totalTaxableAmount: receipt.totalTaxableAmount ?? '',
+        totalTax: receipt.totalTax ?? '',
+        totalAmount: receipt.totalAmount,
+        currency: receipt.currency,
+        category: receipt.category,
+        buyerPin: receipt.buyerPin || '',
+        cuInvoiceNumber: receipt.cuInvoiceNumber || '',
+      });
       
       if (receipt.imageUrl) {
         setImagePreview(receipt.imageUrl);
@@ -130,8 +187,16 @@ export function Review() {
 
     if (!formData.cuInvoiceNumber?.trim()) newErrors.cuInvoiceNumber = "Control Unit Invoice Number is required";
 
-    if (formData.buyerPin?.trim() && !kraPinRegex.test(formData.buyerPin)) {
-      newErrors.buyerPin = "Invalid KRA PIN format";
+    if (formData.buyerPin?.trim()) {
+      if (!kraPinRegex.test(formData.buyerPin)) {
+        newErrors.buyerPin = "Invalid KRA PIN format";
+      } else if (state?.persona?.kraPin) {
+        const scannedPin = formData.buyerPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        const personaPin = state.persona.kraPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        if (scannedPin !== personaPin) {
+          newErrors.buyerPin = `Mismatch: Receipt has ${formData.buyerPin}, but persona has ${state.persona.kraPin}`;
+        }
+      }
     }
 
     setErrors(newErrors);
@@ -140,22 +205,29 @@ export function Review() {
 
   const executeSave = async () => {
     setIsSaving(true);
+    setSaveError(null);
     setShowWarningModal(false);
     try {
+      // Reconstruct blob from base64 if the File object was lost during navigation
+      let activeImageBlob: Blob | undefined = state?.image;
+      if (!(activeImageBlob instanceof Blob) && state?.imagePreview) {
+        console.log("Reconstructing image blob from base64 for saving...");
+        const res = await fetch(state.imagePreview);
+        activeImageBlob = await res.blob();
+      }
+
       const receiptToSave: Receipt = {
         id: existingReceipt?.id || uuidv4(),
-        imageBlob: state?.image, // Only send new image if we just scanned it
+        imageBlob: activeImageBlob, // Use the reconstructed or original blob
         imageUrl: existingReceipt?.imageUrl,
         merchantName: formData.merchantName || 'Unknown',
         merchantKraPin: formData.merchantKraPin,
-        invoiceNumber: formData.invoiceNumber,
         date: formData.date || new Date().toISOString().split('T')[0],
         totalTaxableAmount: (formData.totalTaxableAmount !== undefined && formData.totalTaxableAmount !== null && formData.totalTaxableAmount !== '') ? Number(formData.totalTaxableAmount) : undefined,
         totalTax: (formData.totalTax !== undefined && formData.totalTax !== null && formData.totalTax !== '') ? Number(formData.totalTax) : undefined,
         totalAmount: Number(formData.totalAmount) || 0,
         currency: formData.currency || 'USD',
         category: formData.category || 'Other',
-        buyerName: formData.buyerName,
         buyerPin: formData.buyerPin,
         cuInvoiceNumber: formData.cuInvoiceNumber,
         status: existingReceipt?.status || 'pending',
@@ -192,6 +264,8 @@ export function Review() {
       setShowSuccess(true);
     } catch (error) {
       console.error("Failed to save", error);
+      setSaveError(error instanceof Error ? error.message : "An unknown error occurred while saving.");
+    } finally {
       setIsSaving(false);
     }
   };
@@ -279,9 +353,8 @@ export function Review() {
 
   const isMissing = (val: any) => val === undefined || val === null || val === '';
 
-  const Label = ({ children, field }: { children: React.ReactNode, field: string }) => {
+  const Label = ({ children, field }: { children: React.ReactNode, field: keyof ReceiptForm }) => {
     const hasError = !!errors[field];
-    const missing = isMissing(formData[field as keyof Receipt]) && hasError;
     return (
       <label className={`block text-xs md:text-sm font-medium mb-1 flex items-center gap-1 ${hasError ? 'text-red-600' : 'text-gray-700'}`}>
         {children}
@@ -320,6 +393,19 @@ export function Review() {
       </header>
 
       <main className="flex-1 p-4 md:p-6 space-y-4 md:space-y-6 max-w-2xl mx-auto w-full">
+        {saveError && (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 text-red-700 animate-in fade-in slide-in-from-top-2">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold">Save Failed</p>
+              <p>{saveError}</p>
+            </div>
+            <button onClick={() => setSaveError(null)} className="ml-auto">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        
         {/* Image Preview */}
         <div 
           className="rounded-xl overflow-hidden border bg-gray-100 shadow-inner h-[200px] md:h-[300px] flex items-center justify-center relative group cursor-pointer"
@@ -376,19 +462,6 @@ export function Review() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label field="invoiceNumber">Invoice/Receipt Number</Label>
-              <Input 
-                value={formData.invoiceNumber || ''} 
-                onChange={e => {
-                  setFormData({...formData, invoiceNumber: e.target.value});
-                  if (errors.invoiceNumber) setErrors(prev => ({...prev, invoiceNumber: ''}));
-                }}
-                placeholder="e.g. INV-001"
-                className={`h-10 md:h-11 ${errors.invoiceNumber ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
-              />
-              <ErrorMsg field="invoiceNumber" />
-            </div>
             <div>
               <Label field="date">Date</Label>
               <Input 
@@ -467,15 +540,7 @@ export function Review() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label field="buyerName">Buyer Name</Label>
-              <Input 
-                value={formData.buyerName || ''} 
-                onChange={e => setFormData({...formData, buyerName: e.target.value})}
-                className="h-10 md:h-11"
-              />
-            </div>
+          <div className="grid grid-cols-1 gap-4">
             <div>
               <Label field="buyerPin">Buyer PIN</Label>
               <Input 

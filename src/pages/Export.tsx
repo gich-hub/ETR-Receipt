@@ -39,7 +39,7 @@ export function Export() {
       r.merchantKraPin || '',
       r.merchantName,
       r.date,
-      r.invoiceNumber || r.id,
+      r.cuInvoiceNumber || r.id,
       r.category,
       r.totalAmount.toFixed(2),
       r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',
@@ -120,7 +120,7 @@ export function Export() {
       `"${r.merchantKraPin || ''}"`,
       `"${r.merchantName.replace(/"/g, '""')}"`, // Escape quotes
       `"${r.date}"`,
-      `"${r.invoiceNumber || r.id}"`,
+      `"${r.cuInvoiceNumber || r.id}"`,
       `"${r.category}"`,
       r.totalAmount.toFixed(2),
       r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',

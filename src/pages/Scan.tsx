@@ -13,8 +13,6 @@ export function Scan() {
   
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mismatchWarning, setMismatchWarning] = useState<string | null>(null);
-  const [pendingResult, setPendingResult] = useState<{ file: File; result: OCRResult } | null>(null);
   const hasAutoProcessed = useRef(false);
 
   const handleCapture = async (file: File) => {
@@ -22,25 +20,23 @@ export function Scan() {
     setError(null);
     try {
       // Analyze with Gemini
+      console.log("Analyzing file:", file.name, file.size, file.type);
       const result = await analyzeReceipt(file);
-      
-      // Check for buyer PIN contradiction
-      if (persona && result.buyerPin) {
-        const scannedPin = result.buyerPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        const personaPin = persona.kraPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        
-        if (scannedPin && personaPin && scannedPin !== personaPin) {
-          setMismatchWarning(`The receipt is for buyer PIN ${result.buyerPin}, but the selected persona has PIN ${persona.kraPin}.`);
-          setPendingResult({ file, result });
-          setIsAnalyzing(false);
-          return;
-        }
-      }
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const base64Image = await base64Promise;
+
+      console.log("Analysis complete. Base64 generated. Length:", base64Image.length);
+      console.log("Navigating to review with base64 image and file.");
       
       // Pass data to Review page via state
       navigate('/review', { 
         state: { 
           image: file, 
+          imagePreview: base64Image,
           ocrData: result,
           persona: persona 
         } 
@@ -50,24 +46,6 @@ export function Scan() {
       setError("Failed to analyze receipt. Please try again.");
       setIsAnalyzing(false);
     }
-  };
-
-  const handleProceed = () => {
-    if (pendingResult) {
-      navigate('/review', { 
-        state: { 
-          image: pendingResult.file, 
-          ocrData: pendingResult.result,
-          persona: persona 
-        } 
-      });
-    }
-  };
-
-  const handleCancel = () => {
-    setMismatchWarning(null);
-    setPendingResult(null);
-    setError(null);
   };
 
   useEffect(() => {
@@ -102,23 +80,6 @@ export function Scan() {
             </div>
             <h2 className="text-lg md:text-xl font-semibold text-gray-900">Analyzing Receipt...</h2>
             <p className="text-sm md:text-base text-gray-500">Extracting merchant, date, and amount</p>
-          </div>
-        ) : mismatchWarning ? (
-          <div className="w-full max-w-md space-y-4 md:space-y-6 bg-yellow-50 p-6 rounded-xl border border-yellow-200">
-            <div className="flex items-center gap-3 text-yellow-800 mb-2">
-              <AlertTriangle className="w-6 h-6" />
-              <h2 className="text-lg font-semibold">PIN Mismatch Detected</h2>
-            </div>
-            <p className="text-sm text-yellow-700">{mismatchWarning}</p>
-            <p className="text-sm text-yellow-700 font-medium">Do you want to proceed anyway?</p>
-            <div className="flex gap-3 pt-4">
-              <Button variant="outline" className="flex-1 border-yellow-300 text-yellow-800 hover:bg-yellow-100" onClick={handleCancel}>
-                Cancel
-              </Button>
-              <Button className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white" onClick={handleProceed}>
-                Proceed Anyway
-              </Button>
-            </div>
           </div>
         ) : (
           <div className="w-full max-w-md space-y-4 md:space-y-6">

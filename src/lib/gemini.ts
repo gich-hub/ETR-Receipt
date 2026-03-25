@@ -3,14 +3,12 @@ import { GoogleGenAI, Type } from "@google/genai";
 export interface OCRResult {
   merchantName?: string;
   merchantKraPin?: string;
-  invoiceNumber?: string;
   date?: string;
   totalTaxableAmount?: number;
   totalTax?: number;
   totalAmount?: number;
   currency?: string;
   category?: string;
-  buyerName?: string;
   buyerPin?: string;
   cuInvoiceNumber?: string;
 }
@@ -38,28 +36,37 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       Analyze this receipt image. Extract the following information:
       - Merchant Name (or activity name if unclear)
       - Merchant KRA PIN (usually starts with P or A followed by numbers and a letter)
-      - Invoice Number (or receipt number)
       - Date (YYYY-MM-DD format)
       - Total Taxable Amount (number only)
       - Total Tax (number only)
       - Total Amount (number only)
       - Currency (symbol or code, e.g., USD, EUR, KES)
       - Category (e.g., Meals, Transport, Lodging, Supplies, Entertainment)
-      - Buyer Name (by default the receipt should contain the buyer name, extract it if present)
       - Buyer PIN (by default the receipt should contain the buyer PIN, extract it if present)
-      - Control Unit Invoice Number (a numeric number issued by KRA, usually alongside a QR code)
+      - Control Unit Invoice Number (a long numeric code issued by KRA, usually alongside a QR code)
 
-      Return a JSON object with these keys: merchantName, merchantKraPin, invoiceNumber, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerName, buyerPin, cuInvoiceNumber.
+      Return a JSON object with these keys: merchantName, merchantKraPin, date, totalTaxableAmount, totalTax, totalAmount, currency, category, buyerPin, cuInvoiceNumber.
       If a value is not found, omit the key or return null.
     `;
 
-    // Determine mimeType, fallback to image/jpeg if empty or unsupported
+    // Determine mimeType
     let mimeType = imageBlob.type;
     if (!mimeType || mimeType === 'application/octet-stream' || mimeType === '') {
-      mimeType = 'image/jpeg';
+      // Try to guess from filename if it's a File object
+      const filename = (imageBlob as File).name?.toLowerCase() || '';
+      if (filename.endsWith('.heic') || filename.endsWith('.heif')) {
+        mimeType = 'image/heic';
+      } else if (filename.endsWith('.png')) {
+        mimeType = 'image/png';
+      } else if (filename.endsWith('.webp')) {
+        mimeType = 'image/webp';
+      } else {
+        mimeType = 'image/jpeg';
+      }
     } else if (mimeType === 'image/jpg') {
       mimeType = 'image/jpeg';
     }
+    console.log("Using mimeType for Gemini:", mimeType);
 
     const response = await ai.models.generateContent({
       model: model,
@@ -76,16 +83,14 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
           properties: {
             merchantName: { type: Type.STRING, description: "The name of the merchant" },
             merchantKraPin: { type: Type.STRING, description: "The KRA PIN of the merchant" },
-            invoiceNumber: { type: Type.STRING, description: "The invoice or receipt number" },
             date: { type: Type.STRING, description: "The date of the receipt in YYYY-MM-DD format" },
             totalTaxableAmount: { type: Type.NUMBER, description: "The total taxable amount" },
             totalTax: { type: Type.NUMBER, description: "The total tax amount" },
             totalAmount: { type: Type.NUMBER, description: "The total amount on the receipt" },
             currency: { type: Type.STRING, description: "The currency code or symbol" },
             category: { type: Type.STRING, description: "The expense category" },
-            buyerName: { type: Type.STRING, description: "The name of the buyer" },
             buyerPin: { type: Type.STRING, description: "The PIN of the buyer" },
-            cuInvoiceNumber: { type: Type.STRING, description: "The Control Unit Invoice Number (numeric)" }
+            cuInvoiceNumber: { type: Type.STRING, description: "The Control Unit Invoice Number (long numeric code)" }
           },
           required: ["merchantName", "date", "totalAmount", "currency", "category"]
         }
@@ -100,16 +105,14 @@ export async function analyzeReceipt(imageBlob: Blob): Promise<OCRResult> {
       return {
         merchantName: data.merchantName,
         merchantKraPin: data.merchantKraPin,
-        invoiceNumber: data.invoiceNumber,
         date: data.date,
         totalTaxableAmount: data.totalTaxableAmount,
         totalTax: data.totalTax,
         totalAmount: data.totalAmount,
         currency: data.currency,
         category: data.category,
-        buyerName: data.buyerName,
         buyerPin: data.buyerPin,
-        scuSignature: data.scuSignature
+        cuInvoiceNumber: data.cuInvoiceNumber
       };
     } catch (e) {
       console.error("Failed to parse JSON:", text);
