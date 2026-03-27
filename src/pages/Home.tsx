@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Camera, FileText, Search, Building2, ChevronRight, Edit2, Save, X, Menu, Image as ImageIcon, Plus, Trash2, AlertCircle, Loader2, LogOut } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getReceipts, Receipt } from '@/lib/db';
+import { receiptService, personaService, AppLogger, Receipt, Persona } from '@/services';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,18 +9,8 @@ import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuth } from '@/components/AuthProvider';
-import { db } from '@/lib/firebase';
-import { collection, doc, setDoc, getDocs, deleteDoc, query, where, onSnapshot } from 'firebase/firestore';
 
 import imageCompression from 'browser-image-compression';
-
-export interface Persona {
-  id: string;
-  name: string;
-  kraPin: string;
-  phone: string;
-  ownerId: string;
-}
 
 export function Home() {
   const { user, logout } = useAuth();
@@ -38,35 +28,6 @@ export function Home() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && selectedPersona) {
-      if (!file.type.startsWith('image/')) {
-        navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
-      } else {
-        try {
-          setIsCompressing(true);
-          const options = {
-            maxSizeMB: 1,
-            maxWidthOrHeight: 1920,
-            useWebWorker: false,
-          };
-          const compressedFile = await imageCompression(file, options);
-          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: compressedFile } });
-        } catch (error) {
-          console.error('Error compressing image:', error);
-          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
-        } finally {
-          setIsCompressing(false);
-        }
-      }
-    }
-    // Clear the input so the same file can be selected again if needed
-    if (e.target) {
-      e.target.value = '';
-    }
-  };
-
   useEffect(() => {
     if (!user) return;
 
@@ -74,13 +35,10 @@ export function Home() {
     loadReceipts();
 
     // Real-time listener for personas
-    const personasRef = collection(db, 'users', user.uid, 'personas');
-    const unsubscribe = onSnapshot(personasRef, (snapshot) => {
-      const loadedPersonas = snapshot.docs.map(doc => doc.data() as Persona);
+    const unsubscribe = personaService.subscribeToPersonas(user.uid, (loadedPersonas) => {
       setPersonas(loadedPersonas);
       
       if (loadedPersonas.length > 0) {
-        // If no persona selected yet, or the selected one was deleted, pick the first one
         setSelectedPersona(prev => {
           if (!prev || !loadedPersonas.find(p => p.id === prev.id)) {
             return loadedPersonas[0];
@@ -99,15 +57,42 @@ export function Home() {
   }, [user]);
 
   async function loadReceipts() {
+    if (!user) return;
     try {
-      const data = await getReceipts();
+      const data = await receiptService.fetchReceipts(user.uid);
       setReceipts(data.sort((a, b) => b.createdAt - a.createdAt));
     } catch (error) {
-      console.error("Failed to load receipts", error);
+      AppLogger.error("Failed to load receipts", error);
     } finally {
       setLoading(false);
     }
   }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && selectedPersona) {
+      if (!file.type.startsWith('image/')) {
+        navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+      } else {
+        try {
+          setIsCompressing(true);
+          const options = {
+            maxSizeMB: 1,
+            maxWidthOrHeight: 1920,
+            useWebWorker: false,
+          };
+          const compressedFile = await imageCompression(file, options);
+          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: compressedFile } });
+        } catch (error) {
+          AppLogger.error('Error compressing image', error);
+          navigate('/scan', { state: { persona: selectedPersona, autoProcessFile: file } });
+        } finally {
+          setIsCompressing(false);
+        }
+      }
+    }
+    if (e.target) e.target.value = '';
+  };
 
   const handleEditClick = () => {
     setEditForm(selectedPersona);
@@ -127,29 +112,19 @@ export function Home() {
 
   const handleSavePersona = async () => {
     if (!editForm || !user) return;
-    
     try {
-      const personaData = {
-        ...editForm,
-        ownerId: user.uid,
-      } as Persona;
-
-      const personaRef = doc(db, 'users', user.uid, 'personas', personaData.id);
-      await setDoc(personaRef, personaData);
-      
+      const personaData = { ...editForm, ownerId: user.uid } as Persona;
+      await personaService.savePersona(personaData);
       setSelectedPersona(personaData);
       setIsEditing(false);
       setIsCreating(false);
     } catch (error) {
-      console.error('Error saving persona:', error);
+      AppLogger.error('Error saving persona', error);
     }
   };
 
   const handleCancelEdit = () => {
-    if (personas.length === 0) {
-      // Cannot cancel if there are no personas
-      return;
-    }
+    if (personas.length === 0) return;
     setIsEditing(false);
     setIsCreating(false);
     setShowDeleteConfirm(false);
@@ -160,15 +135,12 @@ export function Home() {
 
   const handleDeletePersona = async () => {
     if (!selectedPersona || !user) return;
-    
     try {
-      const personaRef = doc(db, 'users', user.uid, 'personas', selectedPersona.id);
-      await deleteDoc(personaRef);
-      
+      await personaService.deletePersona(selectedPersona.id, user.uid);
       setIsEditing(false);
       setShowDeleteConfirm(false);
     } catch (error) {
-      console.error('Error deleting persona:', error);
+      AppLogger.error('Error deleting persona', error);
     }
   };
 

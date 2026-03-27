@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams, Link } from 'react-router-dom';
-import { OCRResult } from '@/lib/gemini';
-import { saveReceipt, getReceipt, getReceipts, deleteReceipt, Receipt } from '@/lib/db';
+import { receiptService, TaxValidator, AppLogger, Receipt, Persona, OCRResult } from '@/services';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ArrowLeft, Save, Trash2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Maximize2, TrendingUp } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
-import { Persona } from './Home';
 import { useAuth } from '@/components/AuthProvider';
+import imageCompression from 'browser-image-compression';
 
 interface ReceiptForm {
   merchantName: string;
@@ -36,7 +35,7 @@ export function Review() {
     totalTaxableAmount: '',
     totalTax: '',
     totalAmount: '',
-    currency: 'USD',
+    currency: 'KES',
     category: 'Meals',
     buyerPin: '',
     cuInvoiceNumber: '',
@@ -50,74 +49,146 @@ export function Review() {
   const [savedReceiptUrl, setSavedReceiptUrl] = useState<string | null>(null);
   const [monthlyTotal, setMonthlyTotal] = useState<number>(0);
   const [monthlyCount, setMonthlyCount] = useState<number>(0);
+  const [isStatsLoading, setIsStatsLoading] = useState(false);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showEnlargedImage, setShowEnlargedImage] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    console.log("Review Page Mounted. ID:", id, "State:", state);
-    if (state) {
-      console.log("State keys:", Object.keys(state));
-      if (state.imagePreview) console.log("imagePreview length:", state.imagePreview.length);
-      if (state.image) console.log("image file:", state.image.name, state.image.size);
-    }
-    
-    if (id) {
-      loadExistingReceipt(id);
+    if (id && user) {
+      loadExistingReceipt(id, user.uid);
     } else if (state) {
-      console.log("Loading new receipt from state. Image:", state.image, "Preview exists:", !!state.imagePreview);
       const cleanup = loadNewReceipt(state);
       return cleanup;
     } else {
-      console.warn("No ID and no state found. Navigating home.");
       navigate('/');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [id, user]);
 
-  const loadNewReceipt = (state: { image: File; imagePreview?: string; ocrData: OCRResult }) => {
-    if (!state.image && !state.imagePreview) {
-      console.error("state.image and state.imagePreview are missing in loadNewReceipt");
-      return;
-    }
+  const validate = () => {
+    const newErrors: Record<string, string> = {};
+    if (!formData.merchantName) newErrors.merchantName = 'Merchant name is required';
+    if (!formData.date) newErrors.date = 'Date is required';
+    if (!formData.totalAmount) newErrors.totalAmount = 'Total amount is required';
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const executeSave = async () => {
+    if (!user) return;
+    setIsSaving(true);
+    setSaveError(null);
+
     try {
-      if (state.imagePreview) {
-        console.log("Using base64 image preview from state");
-        setImagePreview(state.imagePreview);
-      } else if (state.image) {
-        const url = URL.createObjectURL(state.image);
-        console.log("Created object URL for image:", url);
-        setImagePreview(url);
-        return () => {
-          console.log("Revoking object URL:", url);
-          URL.revokeObjectURL(url);
-        };
+      const receiptId = id || uuidv4();
+      let imageToSave = state?.image || existingReceipt?.imageBlob;
+
+      // Optimize: Compress image if it's new
+      if (imageToSave && state?.image) {
+        try {
+          const originalSize = (imageToSave as File).size / 1024 / 1024;
+          AppLogger.info(`Starting image compression... Original size: ${originalSize.toFixed(2)} MB`);
+          
+          const options = {
+            maxSizeMB: 0.2, // Target 200KB for faster upload
+            maxWidthOrHeight: 1280,
+            useWebWorker: true,
+          };
+          
+          // Add a timeout safety for compression (60s)
+          const compressionPromise = imageCompression(imageToSave as File, options);
+          const timeoutPromise = new Promise<null>((_, reject) => 
+            setTimeout(() => reject(new Error("Compression timeout")), 60000)
+          );
+          
+          const compressed = await Promise.race([compressionPromise, timeoutPromise]);
+          if (compressed) {
+            imageToSave = compressed;
+            const compressedSize = (compressed as Blob).size / 1024 / 1024;
+            AppLogger.info(`Image compression successful. New size: ${compressedSize.toFixed(2)} MB`);
+          }
+        } catch (err) {
+          AppLogger.warn("Compression failed or timed out, using original image", err);
+        }
       }
+
+      AppLogger.info("Saving receipt to database...");
+      const receipt: Receipt = {
+        id: receiptId,
+        ownerId: user.uid,
+        merchantName: formData.merchantName,
+        merchantKraPin: formData.merchantKraPin,
+        date: formData.date,
+        totalTaxableAmount: Number(formData.totalTaxableAmount) || 0,
+        totalTax: Number(formData.totalTax) || 0,
+        totalAmount: Number(formData.totalAmount) || 0,
+        currency: formData.currency,
+        category: formData.category,
+        buyerPin: formData.buyerPin,
+        cuInvoiceNumber: formData.cuInvoiceNumber,
+        status: 'pending',
+        createdAt: existingReceipt?.createdAt || Date.now(),
+        imageBlob: imageToSave,
+        imageUrl: existingReceipt?.imageUrl,
+      };
+
+      const finalUrl = await receiptService.saveAndNotify(receipt, state?.persona);
       
-      setFormData({
-        merchantName: state.ocrData.merchantName || '',
-        merchantKraPin: state.ocrData.merchantKraPin || '',
-        date: state.ocrData.date || new Date().toISOString().split('T')[0],
-        totalTaxableAmount: state.ocrData.totalTaxableAmount ?? '',
-        totalTax: state.ocrData.totalTax ?? '',
-        totalAmount: state.ocrData.totalAmount ?? '',
-        currency: state.ocrData.currency || 'USD',
-        category: state.ocrData.category || 'Meals',
-        buyerPin: state.ocrData.buyerPin || '',
-        cuInvoiceNumber: state.ocrData.cuInvoiceNumber || '',
-      });
-    } catch (err) {
-      console.error("Error in loadNewReceipt:", err);
+      setSavedReceiptId(receiptId);
+      setSavedReceiptUrl(finalUrl);
+      setShowSuccess(true);
+      
+      // Fetch stats for the success screen in the background
+      setIsStatsLoading(true);
+      try {
+        const stats = await receiptService.getMonthlyStats(user.uid);
+        setMonthlyTotal(stats.total);
+        setMonthlyCount(stats.count);
+      } catch (err) {
+        AppLogger.warn("Failed to fetch stats for success screen", err);
+      } finally {
+        setIsStatsLoading(false);
+      }
+    } catch (error) {
+      AppLogger.error("Save failed", error);
+      setSaveError(AppLogger.formatUserError(error));
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const loadExistingReceipt = async (receiptId: string) => {
+  const loadNewReceipt = (state: { image: File; imagePreview?: string; ocrData: OCRResult }) => {
+    if (state.imagePreview) {
+      setImagePreview(state.imagePreview);
+    } else if (state.image) {
+      const url = URL.createObjectURL(state.image);
+      setImagePreview(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    
+    setFormData({
+      merchantName: state.ocrData.merchantName || '',
+      merchantKraPin: state.ocrData.merchantKraPin || '',
+      date: state.ocrData.date || new Date().toISOString().split('T')[0],
+      totalTaxableAmount: state.ocrData.totalTaxableAmount ?? '',
+      totalTax: state.ocrData.totalTax ?? '',
+      totalAmount: state.ocrData.totalAmount ?? '',
+      currency: state.ocrData.currency || 'KES',
+      category: state.ocrData.category || 'Meals',
+      buyerPin: state.ocrData.buyerPin || '',
+      cuInvoiceNumber: state.ocrData.cuInvoiceNumber || '',
+    });
+  };
+
+  const loadExistingReceipt = async (receiptId: string, ownerId: string) => {
     setIsLoading(true);
     try {
-      const receipt = await getReceipt(receiptId);
+      const receipt = await receiptService.getReceipt(receiptId, ownerId);
       if (!receipt) {
-        alert("Receipt not found");
         navigate('/');
         return;
       }
@@ -141,155 +212,18 @@ export function Review() {
         const url = URL.createObjectURL(receipt.imageBlob);
         setImagePreview(url);
       }
-      
     } catch (error) {
-      console.error("Failed to load receipt", error);
+      AppLogger.error("Failed to load receipt", error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  const validate = () => {
-    const newErrors: Record<string, string> = {};
-    
-    if (!formData.merchantName?.trim()) newErrors.merchantName = "Merchant Name is required";
-    
-    const kraPinRegex = /^[PA]\d{9}[A-Z]$/i;
-    if (!formData.merchantKraPin?.trim()) {
-      newErrors.merchantKraPin = "Merchant KRA PIN is required";
-    } else if (!kraPinRegex.test(formData.merchantKraPin)) {
-      newErrors.merchantKraPin = "Invalid KRA PIN format (e.g. P123456789A)";
-    }
-
-    if (!formData.date) newErrors.date = "Date is required";
-    
-    if (formData.totalTaxableAmount !== undefined && formData.totalTaxableAmount !== null && formData.totalTaxableAmount !== '') {
-      if (isNaN(Number(formData.totalTaxableAmount))) {
-        newErrors.totalTaxableAmount = "Must be numeric";
-      } else if (Number(formData.totalTaxableAmount) < 0) {
-        newErrors.totalTaxableAmount = "Must be positive";
-      }
-    }
-
-    if (formData.totalTax !== undefined && formData.totalTax !== null && formData.totalTax !== '') {
-      if (isNaN(Number(formData.totalTax))) {
-        newErrors.totalTax = "Must be numeric";
-      } else if (Number(formData.totalTax) < 0) {
-        newErrors.totalTax = "Must be positive";
-      }
-    }
-
-    if (formData.totalAmount === undefined || formData.totalAmount === null || formData.totalAmount === '' || isNaN(Number(formData.totalAmount))) {
-      newErrors.totalAmount = "Required (numeric)";
-    } else if (Number(formData.totalAmount) <= 0) {
-      newErrors.totalAmount = "Must be greater than 0";
-    }
-
-    if (!formData.cuInvoiceNumber?.trim()) newErrors.cuInvoiceNumber = "Control Unit Invoice Number is required";
-
-    if (formData.buyerPin?.trim()) {
-      if (!kraPinRegex.test(formData.buyerPin)) {
-        newErrors.buyerPin = "Invalid KRA PIN format";
-      } else if (state?.persona?.kraPin) {
-        const scannedPin = formData.buyerPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        const personaPin = state.persona.kraPin.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-        if (scannedPin !== personaPin) {
-          newErrors.buyerPin = `Mismatch: Receipt has ${formData.buyerPin}, but persona has ${state.persona.kraPin}`;
-        }
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const executeSave = async () => {
-    setIsSaving(true);
-    setSaveError(null);
-    setShowWarningModal(false);
-    try {
-      if (!user) throw new Error("User not authenticated");
-      
-      // Reconstruct blob from base64 if the File object was lost during navigation
-      let activeImageBlob: Blob | undefined = state?.image;
-      if (!(activeImageBlob instanceof Blob) && state?.imagePreview) {
-        console.log("Reconstructing image blob from base64 for saving...");
-        const res = await fetch(state.imagePreview);
-        activeImageBlob = await res.blob();
-      }
-
-      const receiptToSave: Receipt = {
-        id: existingReceipt?.id || uuidv4(),
-        imageBlob: activeImageBlob, // Use the reconstructed or original blob
-        imageUrl: existingReceipt?.imageUrl,
-        merchantName: formData.merchantName || 'Unknown',
-        merchantKraPin: formData.merchantKraPin,
-        date: formData.date || new Date().toISOString().split('T')[0],
-        totalTaxableAmount: (formData.totalTaxableAmount !== undefined && formData.totalTaxableAmount !== null && formData.totalTaxableAmount !== '') ? Number(formData.totalTaxableAmount) : undefined,
-        totalTax: (formData.totalTax !== undefined && formData.totalTax !== null && formData.totalTax !== '') ? Number(formData.totalTax) : undefined,
-        totalAmount: Number(formData.totalAmount) || 0,
-        currency: formData.currency || 'USD',
-        category: formData.category || 'Other',
-        buyerPin: formData.buyerPin,
-        cuInvoiceNumber: formData.cuInvoiceNumber,
-        status: existingReceipt?.status || 'pending',
-        createdAt: existingReceipt?.createdAt || Date.now(),
-        ownerId: existingReceipt?.ownerId || user.uid,
-      };
-
-      const finalImageUrl = await saveReceipt(receiptToSave, state?.persona?.phone);
-      
-      setSavedReceiptId(receiptToSave.id);
-      if (finalImageUrl) setSavedReceiptUrl(finalImageUrl);
-      
-      // Calculate monthly total
-      try {
-        const allReceipts = await getReceipts();
-        const now = new Date();
-        const currentMonth = now.getMonth();
-        const currentYear = now.getFullYear();
-        
-        const userReceipts = allReceipts.filter(r => {
-          const rDate = new Date(r.date);
-          const isCurrentMonth = rDate.getMonth() === currentMonth && rDate.getFullYear() === currentYear;
-          // If a persona is selected, filter by their PIN, otherwise just use all receipts
-          const matchesUser = state?.persona?.kraPin ? (r.buyerPin === state.persona.kraPin) : true;
-          return isCurrentMonth && matchesUser;
-        });
-        
-        const total = userReceipts.reduce((sum, r) => sum + (Number(r.totalAmount) || 0), 0);
-        setMonthlyTotal(total);
-        setMonthlyCount(userReceipts.length);
-      } catch (err) {
-        console.error("Failed to calculate monthly total", err);
-      }
-
-      setShowSuccess(true);
-    } catch (error) {
-      console.error("Failed to save", error);
-      setSaveError(error instanceof Error ? error.message : "An unknown error occurred while saving.");
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const handleSave = () => {
-    if (!validate()) {
+    if (validate()) {
+      executeSave();
+    } else {
       setShowWarningModal(true);
-      return;
-    }
-    executeSave();
-  };
-
-  const executeDelete = async () => {
-    if (!existingReceipt) return;
-    try {
-      await deleteReceipt(existingReceipt.id);
-      navigate('/');
-    } catch (error) {
-      console.error("Failed to delete", error);
     }
   };
 
@@ -297,13 +231,27 @@ export function Review() {
     setShowDeleteModal(true);
   };
 
-  if (isLoading) return <div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin" /></div>;
+  const executeDelete = async () => {
+    if (!id || !user) return;
+    try {
+      await receiptService.deleteReceipt(id, user.uid);
+      navigate('/');
+    } catch (error) {
+      AppLogger.error("Failed to delete receipt", error);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
 
   if (showSuccess) {
-    const baseUrl = process.env.APP_URL || window.location.origin;
-    const receiptUrl = savedReceiptUrl || `${baseUrl}/receipt/${savedReceiptId}`;
-    const phone = state?.persona?.phone ? state.persona.phone.replace(/\D/g, '') : '';
-    const message = `🧾 *New Receipt Scanned*\n\n*Merchant:* ${formData.merchantName}\n*Date:* ${formData.date}\n*Amount:* ${formData.currency} ${formData.totalAmount}\n*Category:* ${formData.category}\n*KRA PIN:* ${formData.merchantKraPin || 'N/A'}\n\nView Receipt: ${receiptUrl}`;
+    const message = `*Receipt from ${formData.merchantName}*\nDate: ${formData.date}\nTotal: ${formData.currency} ${Number(formData.totalAmount).toFixed(2)}\nCategory: ${formData.category}\n\nView Receipt: ${savedReceiptUrl || 'Saved in Vault'}`;
+    const phone = state?.persona?.phone;
     
     // If phone is provided, send to that specific number, otherwise just open whatsapp sharing
     const waUrl = phone 
@@ -322,17 +270,26 @@ export function Review() {
           </p>
         </div>
         
-        <div className="w-full max-w-xs bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col items-center justify-center space-y-1">
+        <div className="w-full max-w-xs bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col items-center justify-center space-y-1 min-h-[100px]">
           <div className="flex items-center gap-2 text-blue-600 font-medium mb-1">
             <TrendingUp className="w-4 h-4" />
             <span className="text-sm uppercase tracking-wider">This Month's Total</span>
           </div>
-          <div className="text-2xl font-bold text-blue-900">
-            {formData.currency || 'KES'} {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div className="text-xs text-blue-600/80 font-medium">
-            Across {monthlyCount} receipt{monthlyCount === 1 ? '' : 's'}
-          </div>
+          {isStatsLoading ? (
+            <div className="flex flex-col items-center py-2">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-400 mb-1" />
+              <span className="text-[10px] text-blue-400 font-medium uppercase tracking-tighter">Updating Stats</span>
+            </div>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-blue-900">
+                {formData.currency || 'KES'} {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-xs text-blue-600/80 font-medium">
+                Across {monthlyCount} receipt{monthlyCount === 1 ? '' : 's'}
+              </div>
+            </>
+          )}
         </div>
         
         <div className="flex flex-col gap-3 w-full max-w-xs pt-2">
@@ -355,8 +312,6 @@ export function Review() {
       </div>
     );
   }
-
-  const isMissing = (val: any) => val === undefined || val === null || val === '';
 
   const Label = ({ children, field }: { children: React.ReactNode, field: keyof ReceiptForm }) => {
     const hasError = !!errors[field];
@@ -391,7 +346,7 @@ export function Review() {
             </Button>
           )}
           <Button onClick={handleSave} disabled={isSaving} size="sm" className="h-8 md:h-10 text-xs md:text-sm">
-            <Save className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
+            {isSaving ? <Loader2 className="w-3 h-3 md:w-4 md:h-4 animate-spin mr-1 md:mr-2" /> : <Save className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />}
             Save
           </Button>
         </div>
@@ -560,18 +515,18 @@ export function Review() {
             </div>
           </div>
 
-          <div>
-            <Label field="cuInvoiceNumber">Control Unit Invoice Number</Label>
-            <Input 
-              value={formData.cuInvoiceNumber || ''} 
-              onChange={e => {
-                setFormData({...formData, cuInvoiceNumber: e.target.value});
-                if (errors.cuInvoiceNumber) setErrors(prev => ({...prev, cuInvoiceNumber: ''}));
-              }}
-              className={`h-10 md:h-11 font-mono text-xs ${errors.cuInvoiceNumber ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
-            />
-            <ErrorMsg field="cuInvoiceNumber" />
-          </div>
+            <div>
+              <Label field="cuInvoiceNumber">CU Invoice Number</Label>
+              <Input 
+                value={formData.cuInvoiceNumber || ''} 
+                onChange={e => {
+                  setFormData({...formData, cuInvoiceNumber: e.target.value});
+                  if (errors.cuInvoiceNumber) setErrors(prev => ({...prev, cuInvoiceNumber: ''}));
+                }}
+                className={`h-10 md:h-11 font-mono text-xs ${errors.cuInvoiceNumber ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+              />
+              <ErrorMsg field="cuInvoiceNumber" />
+            </div>
 
         </div>
       </main>

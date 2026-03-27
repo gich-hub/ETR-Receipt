@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getReceipts, Receipt } from '@/lib/db';
+import { receiptService, AppLogger, Receipt } from '@/services';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, FileText, Table, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -20,11 +20,12 @@ export function Export() {
   }, [user]);
 
   async function loadReceipts() {
+    if (!user) return;
     try {
-      const data = await getReceipts();
+      const data = await receiptService.fetchReceipts(user.uid);
       setReceipts(data.sort((a, b) => b.createdAt - a.createdAt));
     } catch (error) {
-      console.error("Failed to load receipts", error);
+      AppLogger.error("Failed to load receipts", error);
     } finally {
       setLoading(false);
     }

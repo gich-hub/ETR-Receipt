@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { CameraCapture } from '@/components/CameraCapture';
-import { analyzeReceipt, OCRResult } from '@/lib/gemini';
+import { ocrService, AppLogger } from '@/services';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader2, AlertTriangle } from 'lucide-react';
 
@@ -20,8 +20,8 @@ export function Scan() {
     setError(null);
     try {
       // Analyze with Gemini
-      console.log("Analyzing file:", file.name, file.size, file.type);
-      const result = await analyzeReceipt(file);
+      const result = await ocrService.analyzeReceipt(file);
+      
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
         reader.onloadend = () => resolve(reader.result as string);
@@ -29,9 +29,6 @@ export function Scan() {
       });
       const base64Image = await base64Promise;
 
-      console.log("Analysis complete. Base64 generated. Length:", base64Image.length);
-      console.log("Navigating to review with base64 image and file.");
-      
       // Pass data to Review page via state
       navigate('/review', { 
         state: { 
@@ -42,8 +39,8 @@ export function Scan() {
         } 
       });
     } catch (err) {
-      console.error(err);
-      setError("Failed to analyze receipt. Please try again.");
+      AppLogger.error("Failed to analyze receipt", err);
+      setError(AppLogger.formatUserError(err));
       setIsAnalyzing(false);
     }
   };

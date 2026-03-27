@@ -19,7 +19,7 @@ ETR Receipts is a full-stack web application designed to streamline expense trac
 ## 🏗️ Architecture
 
 **High-Level Overview:**
-A modern full-stack application leveraging Firebase for authentication, real-time data persistence, and cloud storage. The frontend captures images and interacts with Gemini for OCR, while Firebase handles secure user sessions and centralized data management.
+A strictly modular and decoupled full-stack application. The architecture follows a Clean Architecture approach, separating the core domain logic from infrastructure details (Firebase, Gemini, WhatsApp). This ensures high maintainability, testability, and the ability to swap out service providers with minimal code changes.
 
 **Tech Stack:**
 
@@ -30,22 +30,23 @@ A modern full-stack application leveraging Firebase for authentication, real-tim
 | **Authentication** | Firebase Auth (Google) | Secure, managed authentication with seamless Google Sign-In integration. |
 | **Database** | Firebase Firestore | Real-time, NoSQL cloud database with offline persistence and robust security rules. |
 | **Storage** | Firebase Storage | Scalable cloud storage for receipt images with secure access control. |
-| **AI / OCR** | `@google/genai` | Powerful multimodal LLM for accurate receipt data extraction. |
+| **AI / OCR** | Gemini 3 (via `@google/genai`) | Powerful multimodal LLM for accurate receipt data extraction. |
+| **Notifications** | WhatsApp (Provider Pattern) | Modular notification layer for automated receipt handoff. |
 
 **Core Architectural Decisions:**
 
-1.  **Client-Side AI Processing**: The Gemini API is called directly from the client side to process the image before uploading, providing immediate feedback and reducing server-side complexity.
-2.  **Serverless Data Management**: Replaced local SQLite and file-system storage with Firebase Firestore and Storage. This ensures data is centralized, synchronized across devices, and protected by server-side security rules.
-3.  **Centralized Persona Management**: Personas are now stored in Firestore, associated with the user's unique ID. This allows users to access their business profiles from any device after logging in.
-4.  **Secure Authentication**: Implemented Google Authentication to ensure that only authorized users can access the application and their specific data vault.
-5.  **Client-Side Image Compression**: Images are compressed in the browser using a web worker before being uploaded to Firebase Storage, optimizing bandwidth and storage usage.
+1.  **Modular Service Layer**: Implemented a central service layer (`ReceiptService`, `PersonaService`, `OCRService`) that orchestrates business logic. The UI components interact only with these services, never directly with the database or AI APIs.
+2.  **Provider Pattern (Dependency Inversion)**: Infrastructure components (Firestore, Gemini, WhatsApp) are implemented as "Providers" that adhere to abstract interfaces (`IDatabaseProvider`, `IOCRProvider`, `INotificationProvider`). This allows swapping a provider (e.g., switching from Firestore to a different database) by editing only one file.
+3.  **Domain-Driven Entities**: Defined core data models (`Receipt`, `Persona`, `OCRResult`) in a central domain layer, ensuring consistent data structures across the entire application.
+4.  **Decoupled UI**: React components are purely presentational or handle local UI state, delegating all data persistence and processing to the service layer.
+5.  **Robust Error Handling & Logging**: Implemented a modular `AppLogger` and standardized error handling across all services and providers to ensure system stability and easier debugging.
 
 ## 🗺️ Roadmap
 
 **Project Overview:**
-ETR Receipts started as a local-only prototype and has evolved into a full-stack application with AI OCR, dynamic multi-persona support, WhatsApp forwarding, and persistent file storage.
+ETR Receipts has evolved from a local-only prototype into a production-ready, modular full-stack application with a decoupled architecture, AI OCR, and secure cloud persistence.
 
-**Current Status (Phase 1, 2 & 3):**
+**Current Status (Phase 1, 2, 3 & 4):**
 *   [x] Basic UI and navigation
 *   [x] Camera and gallery integration for receipt scanning
 *   [x] Gemini AI integration for OCR data extraction (upgraded to Gemini 3)
@@ -62,18 +63,19 @@ ETR Receipts started as a local-only prototype and has evolved into a full-stack
 *   [x] Receipt editing and updating capabilities
 *   [x] PDF and CSV expense report generation
 *   [x] User authentication (Google) and cloud sync
+*   [x] **Modular Backend Refactoring**: Strictly decoupled architecture with Service/Provider patterns.
 
 ## 📝 Changelog
 
-### [2026-03-27] - Firebase Migration and Google Authentication
+### [2026-03-27] - Modular Architecture Refactoring
 
 #### 🚀 Major Changes
-*   **Google Authentication**: Integrated Firebase Authentication with Google Sign-In. Users now have secure, private accounts, ensuring their data is protected and accessible only to them.
-*   **Firestore Migration**: Migrated all data storage (Receipts and Personas) from local SQLite/localStorage to Firebase Firestore. This enables real-time synchronization across devices and centralized data management.
-*   **Cloud Image Storage**: Replaced local file-system image storage with Firebase Storage. Receipt images are now securely stored in the cloud and associated with the user's account.
-*   **Security Rules**: Implemented robust Firestore Security Rules to enforce data ownership and prevent unauthorized access.
-*   **Real-time Personas**: The persona management system now uses real-time listeners (`onSnapshot`), ensuring that any changes to business profiles are instantly reflected across the application.
-*   **Enhanced Export**: Updated the PDF export functionality to fetch receipt images directly from Firebase Storage, ensuring audit-ready reports are generated correctly with cloud-hosted assets.
+*   **Decoupled Architecture**: Refactored the entire application logic into a modular structure (Domain, Infrastructure, Services). This separates "what" the app does from "how" it does it (e.g., separating receipt logic from Firestore implementation).
+*   **Provider Pattern**: Implemented interchangeable providers for Database, OCR, and Notifications. This allows for future-proofing the tech stack by making it easy to swap out underlying technologies.
+*   **Centralized Service Layer**: Created dedicated services (`ReceiptService`, `PersonaService`, `OCRService`) to handle all business logic, significantly simplifying React components and improving code reusability.
+*   **Domain Entities**: Established a clear set of TypeScript interfaces for core entities, ensuring type safety and data consistency throughout the codebase.
+*   **Standardized Logging**: Integrated a modular `AppLogger` for consistent error reporting and debugging across all layers of the application.
+*   **UI Cleanup**: Refactored all major pages (`Home`, `Review`, `Scan`, `Export`) to consume the new service layer, resulting in cleaner, more maintainable frontend code.
 
 ### [2026-03-25] - Image Transfer Reliability and Field Refinement
 
