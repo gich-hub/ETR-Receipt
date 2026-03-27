@@ -1,5 +1,6 @@
-import { storage } from './firebase';
+import { storage, db, auth } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { collection, doc, setDoc, getDocs, getDoc, deleteDoc, query, orderBy, where } from 'firebase/firestore';
 
 export interface Receipt {
   id: string;
@@ -17,73 +18,69 @@ export interface Receipt {
   cuInvoiceNumber?: string;
   status: 'pending' | 'synced';
   createdAt: number;
-  ownerId?: string;
+  ownerId: string;
 }
 
 export async function saveReceipt(receipt: Receipt, phone?: string): Promise<string | undefined> {
-  const formData = new FormData();
-  
-  // Add all fields to FormData
-  formData.append('id', receipt.id);
-  formData.append('merchantName', receipt.merchantName);
-  if (receipt.merchantKraPin) formData.append('merchantKraPin', receipt.merchantKraPin);
-  formData.append('date', receipt.date);
-  if (receipt.totalTaxableAmount !== undefined) formData.append('totalTaxableAmount', receipt.totalTaxableAmount.toString());
-  if (receipt.totalTax !== undefined) formData.append('totalTax', receipt.totalTax.toString());
-  formData.append('totalAmount', receipt.totalAmount.toString());
-  formData.append('currency', receipt.currency);
-  formData.append('category', receipt.category);
-  if (receipt.buyerPin) formData.append('buyerPin', receipt.buyerPin);
-  if (receipt.cuInvoiceNumber) formData.append('cuInvoiceNumber', receipt.cuInvoiceNumber);
-  formData.append('status', 'synced');
-  formData.append('createdAt', receipt.createdAt.toString());
-  if (phone) formData.append('phone', phone);
-  if (receipt.imageUrl) formData.append('imageUrl', receipt.imageUrl);
+  const user = auth.currentUser;
+  if (!user) throw new Error('User not authenticated');
 
-  // If we have a new image blob, append it as 'image'
+  let imageUrl = receipt.imageUrl || '';
+
+  // 1. Upload image to Storage if a new blob exists
   if (receipt.imageBlob) {
-    formData.append('image', receipt.imageBlob, `${receipt.id}.jpg`);
+    const storageRef = ref(storage, `users/${user.uid}/receipts/${receipt.id}.jpg`);
+    const snapshot = await uploadBytes(storageRef, receipt.imageBlob);
+    imageUrl = await getDownloadURL(snapshot.ref);
   }
 
-  const response = await fetch('/api/receipts', {
-    method: 'POST',
-    body: formData,
-  });
+  // 2. Save metadata to Firestore
+  const receiptData = {
+    ...receipt,
+    imageUrl,
+    ownerId: user.uid,
+    status: 'synced' as const,
+  };
+  
+  // Remove imageBlob before saving to Firestore
+  delete (receiptData as any).imageBlob;
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || 'Failed to save receipt to backend');
-  }
+  const receiptRef = doc(db, 'users', user.uid, 'receipts', receipt.id);
+  await setDoc(receiptRef, receiptData);
 
-  const result = await response.json();
-  // The backend returns the imageFilename. We construct the full URL.
-  const baseUrl = window.location.origin;
-  return result.imageFilename ? `${baseUrl}/api/images/${result.imageFilename}` : undefined;
+  // 3. Optional: Sync to legacy backend if needed, or just return the URL
+  // For now, we'll just return the Firestore-hosted image URL
+  return imageUrl;
 }
 
 export async function getReceipts(): Promise<Receipt[]> {
-  const response = await fetch('/api/receipts');
-  if (!response.ok) {
-    throw new Error('Failed to fetch receipts');
-  }
-  return response.json();
+  const user = auth.currentUser;
+  if (!user) return [];
+
+  const receiptsRef = collection(db, 'users', user.uid, 'receipts');
+  const q = query(receiptsRef, orderBy('createdAt', 'desc'));
+  const querySnapshot = await getDocs(q);
+  
+  return querySnapshot.docs.map(doc => doc.data() as Receipt);
 }
 
 export async function getReceipt(id: string): Promise<Receipt | null> {
-  const response = await fetch(`/api/receipts/${id}`);
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error('Failed to fetch receipt');
+  const user = auth.currentUser;
+  if (!user) return null;
+
+  const receiptRef = doc(db, 'users', user.uid, 'receipts', id);
+  const docSnap = await getDoc(receiptRef);
+  
+  if (docSnap.exists()) {
+    return docSnap.data() as Receipt;
   }
-  return response.json();
+  return null;
 }
 
 export async function deleteReceipt(id: string) {
-  const response = await fetch(`/api/receipts/${id}`, {
-    method: 'DELETE',
-  });
-  
-  if (!response.ok) {
-    throw new Error('Failed to delete receipt');
-  }
+  const user = auth.currentUser;
+  if (!user) throw new Error('User not authenticated');
+
+  const receiptRef = doc(db, 'users', user.uid, 'receipts', id);
+  await deleteDoc(receiptRef);
 }

@@ -7,22 +7,44 @@
       "properties": {
         "id": { "type": "string", "description": "Unique identifier for the receipt." },
         "merchantName": { "type": "string", "description": "Name of the merchant or activity." },
+        "merchantKraPin": { "type": "string", "description": "KRA PIN of the merchant." },
         "date": { "type": "string", "format": "date", "description": "Date of the transaction (YYYY-MM-DD)." },
+        "totalTaxableAmount": { "type": "number", "description": "Total taxable amount." },
+        "totalTax": { "type": "number", "description": "Total tax amount." },
         "totalAmount": { "type": "number", "description": "Total amount of the transaction." },
         "currency": { "type": "string", "description": "Currency code (e.g., USD, EUR)." },
         "category": { "type": "string", "description": "Category of the expense." },
+        "buyerPin": { "type": "string", "description": "KRA PIN of the buyer." },
+        "cuInvoiceNumber": { "type": "string", "description": "Control Unit Invoice Number (KRA)." },
         "status": { "type": "string", "enum": ["pending", "synced"], "description": "Sync status of the receipt." },
         "createdAt": { "type": "number", "description": "Timestamp when the receipt was created." },
-        "imageUrl": { "type": "string", "description": "URL of the receipt image stored in Firebase Storage." },
+        "imageUrl": { "type": "string", "description": "URL of the receipt image." },
         "ownerId": { "type": "string", "description": "User ID of the receipt owner." }
       },
       "required": ["merchantName", "date", "totalAmount", "currency", "category", "createdAt", "ownerId"]
+    },
+    "Persona": {
+      "title": "Persona",
+      "description": "A business entity or tax profile for the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the persona." },
+        "name": { "type": "string", "description": "Official entity name." },
+        "kraPin": { "type": "string", "description": "KRA PIN of the persona." },
+        "phone": { "type": "string", "description": "Phone number for auto-send." },
+        "ownerId": { "type": "string", "description": "User ID of the persona owner." }
+      },
+      "required": ["id", "name", "kraPin", "ownerId"]
     }
   },
   "firestore": {
     "users/{userId}/receipts/{receiptId}": {
       "schema": "Receipt",
       "description": "Collection of receipts for a specific user."
+    },
+    "users/{userId}/personas/{personaId}": {
+      "schema": "Persona",
+      "description": "Collection of personas for a specific user."
     }
   }
 }

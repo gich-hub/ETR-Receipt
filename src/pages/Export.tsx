@@ -1,18 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { getReceipts, Receipt } from '@/lib/db';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, FileText, Table, Link as LinkIcon } from 'lucide-react';
+import { ArrowLeft, FileText, Table, Link as LinkIcon, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { useAuth } from '@/components/AuthProvider';
 
 export function Export() {
+  const { user } = useAuth();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
-    loadReceipts();
-  }, []);
+    if (user) {
+      loadReceipts();
+    }
+  }, [user]);
 
   async function loadReceipts() {
     try {
@@ -25,83 +30,104 @@ export function Export() {
     }
   }
 
+  const fetchImageAsBase64 = async (url: string): Promise<string> => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.error("Failed to fetch image", url, e);
+      return '';
+    }
+  };
+
   const generatePDF = async () => {
-    const doc = new jsPDF();
-    
-    // Title
-    doc.setFontSize(18);
-    doc.text("iTax Purchases Report", 14, 22);
-    doc.setFontSize(11);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
+    setIsGenerating(true);
+    try {
+      const doc = new jsPDF();
+      
+      // Title
+      doc.setFontSize(18);
+      doc.text("iTax Purchases Report", 14, 22);
+      doc.setFontSize(11);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
+      doc.text(`User: ${user?.displayName || user?.email || 'Unknown'}`, 14, 36);
 
-    // Table
-    const tableData = receipts.map(r => [
-      r.merchantKraPin || '',
-      r.merchantName,
-      r.date,
-      r.cuInvoiceNumber || r.id,
-      r.category,
-      r.totalAmount.toFixed(2),
-      r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',
-      r.totalTax !== undefined ? r.totalTax.toFixed(2) : ''
-    ]);
+      // Table
+      const tableData = receipts.map(r => [
+        r.merchantKraPin || '',
+        r.merchantName,
+        r.date,
+        r.cuInvoiceNumber || r.id,
+        r.category,
+        r.totalAmount.toFixed(2),
+        r.totalTaxableAmount !== undefined ? r.totalTaxableAmount.toFixed(2) : '',
+        r.totalTax !== undefined ? r.totalTax.toFixed(2) : ''
+      ]);
 
-    autoTable(doc, {
-      head: [['PIN of Supplier', 'Name of Supplier', 'Date', 'Invoice No', 'Description', 'Total', 'Taxable', 'VAT']],
-      body: tableData,
-      startY: 40,
-      styles: { fontSize: 8 },
-    });
+      autoTable(doc, {
+        head: [['PIN of Supplier', 'Name of Supplier', 'Date', 'Invoice No', 'Description', 'Total', 'Taxable', 'VAT']],
+        body: tableData,
+        startY: 42,
+        styles: { fontSize: 8 },
+      });
 
-    // Add Images
-    let y = (doc as any).lastAutoTable.finalY + 10;
-    
-    for (const receipt of receipts) {
-      if (!receipt.imageBlob && !receipt.imageUrl) continue;
+      // Add Images
+      let y = (doc as any).lastAutoTable.finalY + 10;
+      
+      for (const receipt of receipts) {
+        if (!receipt.imageBlob && !receipt.imageUrl) continue;
 
-      if (y > 250) {
-        doc.addPage();
-        y = 20;
-      }
-
-      doc.setFontSize(12);
-      doc.text(`Receipt: ${receipt.merchantName} (${receipt.date})`, 14, y);
-      y += 10;
-
-      try {
-        let base64 = '';
-        if (receipt.imageBlob) {
-          base64 = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(receipt.imageBlob!);
-          });
-        } else if (receipt.imageUrl) {
-          // Fetch and convert imageUrl to base64 if needed, skipping for now to keep it simple
-          continue; 
+        if (y > 250) {
+          doc.addPage();
+          y = 20;
         }
 
-        if (base64) {
-          const imgProps = doc.getImageProperties(base64);
-          const pdfWidth = doc.internal.pageSize.getWidth() - 28;
-          const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-          
-          if (y + pdfHeight > 280) {
-            doc.addPage();
-            y = 20;
+        doc.setFontSize(12);
+        doc.text(`Receipt: ${receipt.merchantName} (${receipt.date})`, 14, y);
+        y += 10;
+
+        try {
+          let base64 = '';
+          if (receipt.imageBlob) {
+            base64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.readAsDataURL(receipt.imageBlob!);
+            });
+          } else if (receipt.imageUrl) {
+            base64 = await fetchImageAsBase64(receipt.imageUrl);
           }
 
-          doc.addImage(base64, 'JPEG', 14, y, pdfWidth, pdfHeight);
-          y += pdfHeight + 10;
-        }
-      } catch (e) {
-        console.error("Failed to add image for receipt", receipt.id, e);
-        doc.text("[Image Error]", 14, y);
-        y += 10;
-      }
-    }
+          if (base64) {
+            const imgProps = doc.getImageProperties(base64);
+            const pdfWidth = doc.internal.pageSize.getWidth() - 28;
+            const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+            
+            if (y + pdfHeight > 280) {
+              doc.addPage();
+              y = 20;
+            }
 
-    doc.save("itax_purchases_export.pdf");
+            doc.addImage(base64, 'JPEG', 14, y, pdfWidth, pdfHeight);
+            y += pdfHeight + 10;
+          }
+        } catch (e) {
+          console.error("Failed to add image for receipt", receipt.id, e);
+          doc.text("[Image Error]", 14, y);
+          y += 10;
+        }
+      }
+
+      doc.save("itax_purchases_export.pdf");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const generateCSV = () => {
@@ -176,13 +202,14 @@ export function Export() {
           {/* PDF Option */}
           <button 
             onClick={generatePDF}
-            className="w-full text-left bg-[#141414] hover:bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 flex items-start gap-5 transition-colors group"
+            disabled={isGenerating}
+            className="w-full text-left bg-[#141414] hover:bg-[#1a1a1a] border border-white/5 rounded-2xl p-5 flex items-start gap-5 transition-colors group disabled:opacity-50"
           >
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center flex-shrink-0 group-hover:bg-red-500/20 transition-colors">
-              <FileText className="w-7 h-7 text-red-500" />
+              {isGenerating ? <Loader2 className="w-7 h-7 text-red-500 animate-spin" /> : <FileText className="w-7 h-7 text-red-500" />}
             </div>
             <div className="flex-1 pt-1">
-              <h3 className="text-xl font-bold text-white mb-1.5">Audit-Ready PDF</h3>
+              <h3 className="text-xl font-bold text-white mb-1.5">{isGenerating ? 'Generating PDF...' : 'Audit-Ready PDF'}</h3>
               <p className="text-gray-400 text-sm leading-relaxed">
                 Monthly summary with receipt images attached directly below data tables.
               </p>

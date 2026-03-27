@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Camera, FileText, Search, Building2, ChevronRight, Edit2, Save, X, Menu, Image as ImageIcon, Plus, Trash2, AlertCircle, Loader2 } from 'lucide-react';
+import { Camera, FileText, Search, Building2, ChevronRight, Edit2, Save, X, Menu, Image as ImageIcon, Plus, Trash2, AlertCircle, Loader2, LogOut } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getReceipts, Receipt } from '@/lib/db';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,9 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import { QRCodeSVG } from 'qrcode.react';
+import { useAuth } from '@/components/AuthProvider';
+import { db } from '@/lib/firebase';
+import { collection, doc, setDoc, getDocs, deleteDoc, query, where, onSnapshot } from 'firebase/firestore';
 
 import imageCompression from 'browser-image-compression';
 
@@ -16,9 +19,11 @@ export interface Persona {
   name: string;
   kraPin: string;
   phone: string;
+  ownerId: string;
 }
 
 export function Home() {
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -29,7 +34,7 @@ export function Home() {
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [editForm, setEditForm] = useState<Persona | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Persona> | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
 
@@ -63,26 +68,35 @@ export function Home() {
   };
 
   useEffect(() => {
-    loadReceipts();
-    loadPersonas();
-  }, []);
+    if (!user) return;
 
-  function loadPersonas() {
-    const saved = localStorage.getItem('receipt_vault_personas');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setPersonas(parsed);
-      if (parsed.length > 0) {
-        setSelectedPersona(parsed[0]);
+    // Load receipts
+    loadReceipts();
+
+    // Real-time listener for personas
+    const personasRef = collection(db, 'users', user.uid, 'personas');
+    const unsubscribe = onSnapshot(personasRef, (snapshot) => {
+      const loadedPersonas = snapshot.docs.map(doc => doc.data() as Persona);
+      setPersonas(loadedPersonas);
+      
+      if (loadedPersonas.length > 0) {
+        // If no persona selected yet, or the selected one was deleted, pick the first one
+        setSelectedPersona(prev => {
+          if (!prev || !loadedPersonas.find(p => p.id === prev.id)) {
+            return loadedPersonas[0];
+          }
+          return prev;
+        });
+        setIsCreating(false);
       } else {
-        setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '' });
+        setSelectedPersona(null);
+        setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '', ownerId: user.uid });
         setIsCreating(true);
       }
-    } else {
-      setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '' });
-      setIsCreating(true);
-    }
-  }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   async function loadReceipts() {
     try {
@@ -103,28 +117,32 @@ export function Home() {
   };
 
   const handleCreateClick = () => {
-    setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '' });
+    if (!user) return;
+    setEditForm({ id: uuidv4(), name: '', kraPin: '', phone: '', ownerId: user.uid });
     setIsCreating(true);
     setIsEditing(false);
     setIsMobileMenuOpen(false);
     setShowDeleteConfirm(false);
   };
 
-  const handleSavePersona = () => {
-    if (!editForm) return;
+  const handleSavePersona = async () => {
+    if (!editForm || !user) return;
     
-    let updatedPersonas;
-    if (isCreating) {
-      updatedPersonas = [...personas, editForm];
-    } else {
-      updatedPersonas = personas.map(p => p.id === editForm.id ? editForm : p);
+    try {
+      const personaData = {
+        ...editForm,
+        ownerId: user.uid,
+      } as Persona;
+
+      const personaRef = doc(db, 'users', user.uid, 'personas', personaData.id);
+      await setDoc(personaRef, personaData);
+      
+      setSelectedPersona(personaData);
+      setIsEditing(false);
+      setIsCreating(false);
+    } catch (error) {
+      console.error('Error saving persona:', error);
     }
-    
-    setPersonas(updatedPersonas);
-    setSelectedPersona(editForm);
-    localStorage.setItem('receipt_vault_personas', JSON.stringify(updatedPersonas));
-    setIsEditing(false);
-    setIsCreating(false);
   };
 
   const handleCancelEdit = () => {
@@ -140,18 +158,17 @@ export function Home() {
     }
   };
 
-  const handleDeletePersona = () => {
-    if (!editForm) return;
-    const updatedPersonas = personas.filter(p => p.id !== editForm.id);
-    setPersonas(updatedPersonas);
-    localStorage.setItem('receipt_vault_personas', JSON.stringify(updatedPersonas));
-    setIsEditing(false);
-    setShowDeleteConfirm(false);
-    if (updatedPersonas.length > 0) {
-      setSelectedPersona(updatedPersonas[0]);
-    } else {
-      setSelectedPersona(null);
-      setIsCreating(true);
+  const handleDeletePersona = async () => {
+    if (!selectedPersona || !user) return;
+    
+    try {
+      const personaRef = doc(db, 'users', user.uid, 'personas', selectedPersona.id);
+      await deleteDoc(personaRef);
+      
+      setIsEditing(false);
+      setShowDeleteConfirm(false);
+    } catch (error) {
+      console.error('Error deleting persona:', error);
     }
   };
 
@@ -250,6 +267,31 @@ export function Home() {
             ))}
           </div>
         </div>
+        
+        {/* User Profile & Logout */}
+        <div className="p-4 border-t bg-gray-50/50">
+          <div className="flex items-center gap-3 mb-4 px-2">
+            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center overflow-hidden border border-blue-200">
+              {user?.photoURL ? (
+                <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-blue-600 font-bold">{user?.displayName?.[0] || 'U'}</span>
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-gray-900 truncate">{user?.displayName}</div>
+              <div className="text-xs text-gray-500 truncate">{user?.email}</div>
+            </div>
+          </div>
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl"
+            onClick={logout}
+          >
+            <LogOut className="w-5 h-5 mr-3" />
+            Sign Out
+          </Button>
+        </div>
       </aside>
 
       {/* Main Content */}
@@ -295,7 +337,7 @@ export function Home() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Official Entity Name</label>
                   <Input 
-                    value={editForm.name} 
+                    value={editForm.name || ''} 
                     onChange={e => setEditForm({...editForm, name: e.target.value})}
                     placeholder="e.g. Acme Corporation Ltd"
                   />
@@ -303,7 +345,7 @@ export function Home() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">KRA PIN</label>
                   <Input 
-                    value={editForm.kraPin} 
+                    value={editForm.kraPin || ''} 
                     onChange={e => setEditForm({...editForm, kraPin: e.target.value})}
                     className="font-mono uppercase"
                     placeholder="e.g. P051234567Z"
@@ -312,7 +354,7 @@ export function Home() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number (For Auto-Send)</label>
                   <Input 
-                    value={editForm.phone} 
+                    value={editForm.phone || ''} 
                     onChange={e => setEditForm({...editForm, phone: e.target.value})}
                     placeholder="+254700000000"
                   />

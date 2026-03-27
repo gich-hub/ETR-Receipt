@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { ArrowLeft, Save, Trash2, Loader2, CheckCircle2, AlertCircle, ArrowRight, X, Maximize2, TrendingUp } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { Persona } from './Home';
+import { useAuth } from '@/components/AuthProvider';
 
 interface ReceiptForm {
   merchantName: string;
@@ -23,6 +24,7 @@ interface ReceiptForm {
 
 export function Review() {
   const { id } = useParams();
+  const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const state = location.state as { image: File; imagePreview?: string; ocrData: OCRResult; persona?: Persona } | null;
@@ -208,6 +210,8 @@ export function Review() {
     setSaveError(null);
     setShowWarningModal(false);
     try {
+      if (!user) throw new Error("User not authenticated");
+      
       // Reconstruct blob from base64 if the File object was lost during navigation
       let activeImageBlob: Blob | undefined = state?.image;
       if (!(activeImageBlob instanceof Blob) && state?.imagePreview) {
@@ -232,6 +236,7 @@ export function Review() {
         cuInvoiceNumber: formData.cuInvoiceNumber,
         status: existingReceipt?.status || 'pending',
         createdAt: existingReceipt?.createdAt || Date.now(),
+        ownerId: existingReceipt?.ownerId || user.uid,
       };
 
       const finalImageUrl = await saveReceipt(receiptToSave, state?.persona?.phone);

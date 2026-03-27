@@ -19,7 +19,7 @@ ETR Receipts is a full-stack web application designed to streamline expense trac
 ## 🏗️ Architecture
 
 **High-Level Overview:**
-A monolithic full-stack application serving a React SPA via Vite middleware on an Express server. The frontend captures images and interacts with Gemini for OCR, while the backend handles file uploads and CSV-based data persistence.
+A modern full-stack application leveraging Firebase for authentication, real-time data persistence, and cloud storage. The frontend captures images and interacts with Gemini for OCR, while Firebase handles secure user sessions and centralized data management.
 
 **Tech Stack:**
 
@@ -27,28 +27,30 @@ A monolithic full-stack application serving a React SPA via Vite middleware on a
 | :--- | :--- | :--- |
 | **Frontend** | React 19 + Vite + PWA | Fast development server, modern component-based UI, installable as a standalone app. |
 | **Styling** | Tailwind CSS | Utility-first styling for rapid, responsive UI development. |
-| **Backend** | Node.js + Express | Lightweight server to handle API requests and serve static assets. |
+| **Authentication** | Firebase Auth (Google) | Secure, managed authentication with seamless Google Sign-In integration. |
+| **Database** | Firebase Firestore | Real-time, NoSQL cloud database with offline persistence and robust security rules. |
+| **Storage** | Firebase Storage | Scalable cloud storage for receipt images with secure access control. |
 | **AI / OCR** | `@google/genai` | Powerful multimodal LLM for accurate receipt data extraction. |
-| **Storage** | SQLite + File System (Multer) | Robust, concurrent local storage for metadata (`better-sqlite3`) and images without needing a complex database server setup. |
 
 **Core Architectural Decisions:**
 
-1.  **Client-Side AI Processing**: The Gemini API is called directly from the client side to process the image before uploading, reducing server load and providing immediate feedback to the user.
-2.  **SQLite Data Storage**: To keep the application portable while supporting concurrent users, receipt metadata is stored in a local SQLite database (`data/receipts.db`) using `better-sqlite3`. Images are saved directly to the file system using Multer.
-3.  **Local Storage for Personas**: Persona configurations (names, PINs, phone numbers) are stored in the browser's `localStorage`, allowing for quick, client-side state management without complicating the backend schema.
-4.  **Client-Side Image Compression**: Images are compressed in the browser using a web worker before being uploaded or sent to the AI model, significantly reducing bandwidth and storage requirements.
+1.  **Client-Side AI Processing**: The Gemini API is called directly from the client side to process the image before uploading, providing immediate feedback and reducing server-side complexity.
+2.  **Serverless Data Management**: Replaced local SQLite and file-system storage with Firebase Firestore and Storage. This ensures data is centralized, synchronized across devices, and protected by server-side security rules.
+3.  **Centralized Persona Management**: Personas are now stored in Firestore, associated with the user's unique ID. This allows users to access their business profiles from any device after logging in.
+4.  **Secure Authentication**: Implemented Google Authentication to ensure that only authorized users can access the application and their specific data vault.
+5.  **Client-Side Image Compression**: Images are compressed in the browser using a web worker before being uploaded to Firebase Storage, optimizing bandwidth and storage usage.
 
 ## 🗺️ Roadmap
 
 **Project Overview:**
 ETR Receipts started as a local-only prototype and has evolved into a full-stack application with AI OCR, dynamic multi-persona support, WhatsApp forwarding, and persistent file storage.
 
-**Current Status (Phase 1 & 2):**
+**Current Status (Phase 1, 2 & 3):**
 *   [x] Basic UI and navigation
 *   [x] Camera and gallery integration for receipt scanning
 *   [x] Gemini AI integration for OCR data extraction (upgraded to Gemini 3)
-*   [x] Full-stack Express backend for data persistence
-*   [x] SQLite database and image file storage
+*   [x] Firebase integration for data persistence and authentication
+*   [x] Firestore database and Firebase Storage for images
 *   [x] Client-side image compression for faster uploads
 *   [x] Dynamic multi-persona management (Create, Edit, Delete) with KRA PINs and phone numbers
 *   [x] WhatsApp forwarding integration with direct receipt links
@@ -59,14 +61,19 @@ ETR Receipts started as a local-only prototype and has evolved into a full-stack
 *   [x] Interactive receipt image enlargement on the review screen
 *   [x] Receipt editing and updating capabilities
 *   [x] PDF and CSV expense report generation
-
-**Upcoming Phases:**
-
-*   **Phase 3: Analytics & Sync**
-    *   [ ] Add monthly spending charts and category breakdowns
-    *   [ ] Implement user authentication and cloud sync
+*   [x] User authentication (Google) and cloud sync
 
 ## 📝 Changelog
+
+### [2026-03-27] - Firebase Migration and Google Authentication
+
+#### 🚀 Major Changes
+*   **Google Authentication**: Integrated Firebase Authentication with Google Sign-In. Users now have secure, private accounts, ensuring their data is protected and accessible only to them.
+*   **Firestore Migration**: Migrated all data storage (Receipts and Personas) from local SQLite/localStorage to Firebase Firestore. This enables real-time synchronization across devices and centralized data management.
+*   **Cloud Image Storage**: Replaced local file-system image storage with Firebase Storage. Receipt images are now securely stored in the cloud and associated with the user's account.
+*   **Security Rules**: Implemented robust Firestore Security Rules to enforce data ownership and prevent unauthorized access.
+*   **Real-time Personas**: The persona management system now uses real-time listeners (`onSnapshot`), ensuring that any changes to business profiles are instantly reflected across the application.
+*   **Enhanced Export**: Updated the PDF export functionality to fetch receipt images directly from Firebase Storage, ensuring audit-ready reports are generated correctly with cloud-hosted assets.
 
 ### [2026-03-25] - Image Transfer Reliability and Field Refinement
 
